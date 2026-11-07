@@ -71,6 +71,7 @@ export default class Flowdeck extends View {
       name: InputState.new({ placeholder: "Production (optional)" }),
       search: InputState.new({ placeholder: "Search workflows" }),
       ask: TextareaState.new({ placeholder: "Ask anything about your workflows…" }),
+      reply: TextareaState.new({ placeholder: "Reply to Claude…" }),
     };
     this.inputs.key.set_masked(true);
     this.inputs.ask.set_auto_grow(1, 6);
@@ -87,6 +88,8 @@ export default class Flowdeck extends View {
     this.inputs.url.on("submit", (_e, cx) => this.inputs.key.focus());
     this.inputs.search.on("change", (_e, cx) => cx.notify());
     this.inputs.ask.on("submit", (e, cx) => { if (!e.shift) this.askCurrent(cx); });
+    this.inputs.reply.set_auto_grow(1, 6);
+    this.inputs.reply.on("submit", (e, cx) => { if (!e.shift) this.replyCurrent(cx); });
     this.tab = "overview";
     this.entered = {};
     this.sel = { workflowId: null, node: null, runId: null, failureKey: null, filter: "all", failFilter: "open" };
@@ -621,6 +624,14 @@ export default class Flowdeck extends View {
 
   lookFurther(t, mode, cx) {
     cx.spawn(async (cx) => this.asking.lookFurther(this, t, mode, cx));
+  }
+
+  // A reply under the newest answer: a follow-up in the same conversation and scope.
+  replyCurrent(cx) {
+    const q = this.inputs.reply.value().trim();
+    if (!q || this.asking.busy) return;
+    this.inputs.reply.set_value("");
+    this.ask(q, cx);
   }
 
   askCurrent(cx) {

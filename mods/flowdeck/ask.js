@@ -325,6 +325,21 @@ function runSearch(c, t) {
   return null;
 }
 
+// Under the newest answer: quick follow-ups and a reply box, so carrying on is right where the reading ends. Enter
+// sends, Shift-Enter makes a new line; it's the same conversation and scope.
+let replyHandler = null;
+const QUICK = ["How do I fix it?", "Explain it more simply", "What should I check next?"];
+function replyBox(c, t) {
+  if (!replyHandler || t.error) return null;
+  return v_flex().id(`reply-${t.id}`).gap(8).pt(8).border_t(1).border_color(c.border)
+    .child(h_flex().gap(6).items_center().flex_wrap()
+      .children(QUICK.map((q, k) => chip(c, { id: `quick-${t.id}-${k}`, label: q, iconName: "chat", active: false, onClick: (_e, cx) => replyHandler.ask(q, cx) }))))
+    .child(h_flex().gap(8).items_end().p(8).rounded(10).bg(c.background).border(1).border_color(alpha(c.brand, 0.45))
+      .child(div().id(`reply-input-${t.id}`).flex_1().min_w(0).py(2).cursor_text().on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+        .child(Textarea.new(replyHandler.input).w_full().text_size(13).text_color(c.foreground)))
+      .child(button(c, { id: `reply-send-${t.id}`, iconName: "send", kind: "primary", size: "sm", tooltip: "Reply (Enter)", onClick: (_e, cx) => replyHandler.send(cx) })));
+}
+
 // Look further, under an answer that used a run (or searched for one): the run before, the run after, or the same
 // text in other workflows.
 let lookHandler = () => {};
@@ -402,7 +417,8 @@ function answer(c, t, i) {
     .when(Boolean(t.error), (e) => e.child(h_flex().gap(8).items_start().child(icon("alert", 13, c.err)).child(div().flex_1().text_size(12.5).text_color(c.err).child(t.error))))
     .when(Boolean(t.stopped), (e) => e.child(div().text_size(11.5).text_color(c.dim).child("Stopped.")))
     .map((e) => { const row = openRow(c, t); return row ? e.child(row) : e; })
-    .map((e) => { const row = lookRow(c, t); return row ? e.child(row) : e; });
+    .map((e) => { const row = lookRow(c, t); return row ? e.child(row) : e; })
+    .when(i === 0 && !t.streaming && !t.confirm && !t.searching, (e) => { const box = replyBox(c, t); return box ? e.child(box) : e; });
 }
 
 const question = (c, t) => h_flex().id(`turn-${t.id}`).justify_end().child(div().max_w("80%").px(14).py(9).rounded(14).bg(alpha(c.brand, 0.14)).border(1).border_color(alpha(c.brand, 0.3))
@@ -423,6 +439,7 @@ export function askView(view, c) {
   openSafe = makeOpenSafe(view);
   lookHandler = (t, mode, cx) => view.lookFurther(t, mode, cx);
   openHandler = openHandlerFor(view);
+  replyHandler = { input: view.inputs.reply, ask: (q, cx) => view.ask(q, cx), send: (cx) => view.replyCurrent(cx) };
   searchStopper = () => { view.asking.stopSearch = true; };
   const s = view.asking, en = Boolean(view.entered.ask);
   const busy = s.busy;
@@ -539,6 +556,7 @@ export function askDock(view, c, w) {
   openSafe = makeOpenSafe(view);
   lookHandler = (t, mode, cx) => view.lookFurther(t, mode, cx);
   openHandler = openHandlerFor(view);
+  replyHandler = { input: view.inputs.reply, ask: (q, cx) => view.ask(q, cx), send: (cx) => view.replyCurrent(cx) };
   searchStopper = () => { view.asking.stopSearch = true; };
   const s = view.asking, busy = s.busy;
   const f = claudeFocus(view, w.id);
