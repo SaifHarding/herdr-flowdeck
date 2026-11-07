@@ -1,6 +1,6 @@
 # Flowdeck for n8n
 
-A pane that connects to an n8n instance with an API key and shows how it's doing. There's an overview of the last day, every workflow drawn as a live graph with any run laid over it, a week of failures grouped by cause, and a box for asking Claude about any of it. A toast fires the moment a run fails. A demo mode with a made-up instance lets people try it before connecting anything.
+Monitor and debug your n8n workflows without leaving Herdr. Connect an instance with an API key and every workflow is drawn as a live graph, with any run laid over it and the failing node lit red. Failures are grouped by cause, and a toast fires the moment a run fails. Ask Claude why something broke while a pixel-art sprite walks the graph to the node it blames. Read-only, with keys kept in your system keychain, and a demo instance to try first.
 
 ![Flowdeck for n8n](preview.png)
 
