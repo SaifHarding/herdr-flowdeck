@@ -212,6 +212,15 @@ export default class Flowdeck extends View {
 
   async connect(cx) {
     if (this.form.busy) return;
+    // The MCP server URL pasted into the token field: put it where it belongs if that's empty, and say what's missing.
+    const pasted = checkKey(this.inputs.key.value());
+    if (pasted.url) {
+      if (!this.inputs.url.value().trim()) this.inputs.url.set_value(pasted.url);
+      this.inputs.key.set_value("");
+      this.form.error = pasted.error;
+      cx.notify();
+      return;
+    }
     const url = normalizeUrl(this.inputs.url.value(), { allowInsecure: this.form.allowInsecure });
     this.form.needsOptIn = Boolean(url.needsOptIn) || (Boolean(url.insecure) && this.form.allowInsecure);
     if (url.error) { this.form.error = url.error; cx.notify(); return; }

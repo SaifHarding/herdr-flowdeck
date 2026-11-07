@@ -110,10 +110,14 @@ export function normalizeUrl(input, { allowInsecure = false } = {}) {
 // n8n API keys and MCP tokens are JWTs or long hex/base62 strings. Anything else is refused before it's stored, which
 // also keeps the keychain command line free of quoting surprises.
 export function checkKey(key) {
-  const k = String(key ?? "").trim();
+  // What people paste: the token alone, or with "Bearer " and quotes from a config snippet.
+  let k = String(key ?? "").trim().replace(/^["'`]+|["'`,]+$/g, "").trim().replace(/^Bearer\s+/i, "").trim();
   if (!k) return { error: "Paste your key" };
+  if (/^https?:\/\//i.test(k) || /\/mcp-server\//i.test(k)) {
+    return { error: "That's an address, not a token. In n8n's Connect a client dialog, open the API key tab and copy the token shown there.", url: k };
+  }
   if (/\s/.test(k)) return { error: "The key has spaces in it: copy it again" };
-  if (!/^[A-Za-z0-9._\-]+$/.test(k)) return { error: "That key has characters n8n keys never have" };
+  if (!/^[A-Za-z0-9._\-]+$/.test(k)) return { error: "That key has characters n8n keys never have. Copy just the token, without anything around it." };
   if (k.length < 20) return { error: "That key is too short" };
   if (k.length > 4096) return { error: "That key is too long" };
   return { key: k };

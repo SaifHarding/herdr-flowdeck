@@ -293,3 +293,10 @@ test("focus moves are event-driven: travel on change, then dwell; honk every thi
     assert.ok(both / 1000 < 0.1, "the two layers take turns");
   }
 });
+
+test("pasted tokens: Bearer and quotes are trimmed, and an address in the token field is caught", () => {
+  assert.equal(checkKey('"Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcDEF_123"').key, "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.abcDEF_123");
+  const u = checkKey("https://your-team.app.n8n.cloud/mcp-server/http");
+  assert.ok(u.error && u.url, "an address, not a token");
+  assert.match(u.error, /API key tab/);
+});

@@ -69,7 +69,7 @@ export function connectView(view, c) {
     .tooltip(f.show ? "Hide" : "Show").on_click((_e, cx) => { f.show = !f.show; view.inputs.key.set_masked(!f.show); cx.notify(); })
     .child(icon(f.show ? "eye-off" : "eye", 14, c.dim));
   const how = mcp
-    ? ["In n8n, open Settings → Instance-level MCP, turn it on, and copy the access token.", "MCP shows workflows and their graphs. Run history and failures need an API key."]
+    ? ["In n8n, open Settings → Instance-level MCP → Connect a client, choose the API key tab and copy the token (not the server URL). Flowdeck uses the token; OAuth sign-in isn't supported yet.", "MCP shows workflows and their graphs. Run history and failures need an API key."]
     : ["In n8n, open Settings → n8n API and create an API key.", "Self-hosted? The public API must be enabled (it is unless N8N_PUBLIC_API_DISABLED is set)."];
 
   const form = v_flex().id("card").w_full().p(22).gap(16).rounded(16).bg(alpha(c.surface, 0.92)).border(1).border_color(c.border).shadow_lg()
