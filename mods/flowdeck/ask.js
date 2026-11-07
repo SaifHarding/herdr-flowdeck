@@ -2,11 +2,11 @@
 // Code with no tools. The newest answer sits right under the question box and types itself out as it streams.
 // Before the first question, Flowdeck says exactly what leaves the machine and waits for a yes.
 
-import { div } from "gpui-kit";
+import { div, PathBuilder, Background } from "gpui-kit";
 import { h_flex, v_flex, Textarea, TextView } from "gpui-base";
 import { shared, setShared } from "herdr";
 import { alpha, icon, button, chip, spinner, rise, mono, card, dot } from "./ui.js";
-import { buildContext, buildPrompt, SYSTEM_PROMPT, lastMentioned, mentionsInOrder, culpritIn, safeMarkdown, answerLinkAllowed, quotedNeedle, runMentions, runEvidence, running, when } from "./model.js";
+import { buildContext, buildPrompt, SYSTEM_PROMPT, lastMentioned, mentionsInOrder, culpritIn, safeMarkdown, answerLinkAllowed, quotedNeedle, mentionScore, runEvidence, running, when, splitSummary } from "./model.js";
 import { MODELS, startAsk, readAsk, cancelAsk, cleanupAsk } from "./claude.js";
 import { graphView, GraphState } from "./graph.js";
 import { randomBytes } from "crypto";
@@ -88,23 +88,30 @@ export class AskSession {
 
   // Looks through the newest runs (of the workflow asked about, else of the instance) for one whose data mentions the
   // quoted text: one run at a time, each read as raw text and dropped, so memory stays flat however big runs are.
+  // Looks through the newest runs (of the workflow asked about, else of the instance) for the quoted text and ranks
+  // every match (mentionScore), so a run that only lists the title loses to the one that made it. One run is read at
+  // a time, as raw text, and dropped: only ids and scores are kept, and the chosen run is read again on a yes.
   async findRun(view, scope, needle, a, cx) {
     const wid = scope.kind !== "all" ? scope.workflowId : null;
     const list = view.data.executions.filter((e) => (!wid || e.workflowId === wid) && !running(e)).slice(0, RUN_SEARCH);
-    a.searching = { needle, done: 0, total: list.length };
+    a.searching = { needle, done: 0, total: list.length, hits: 0 };
     cx.notify();
     const searched = { needle, count: 0, workflow: wid ? view.derived().byId.get(wid)?.name : null };
+    const hits = [];
     for (const e of list) {
       if (!this.preparing) break;
       let text = null;
       try { text = await view.source.executionText(String(e.id)); } catch {}
       searched.count++;
-      if (a.searching) a.searching.done = searched.count;
+      const score = text ? mentionScore(text, needle) : 0;
+      text = null;
+      if (score) hits.push({ id: String(e.id), startedAt: e.startedAt, status: e.status, score });
+      if (a.searching) { a.searching.done = searched.count; a.searching.hits = hits.length; }
       cx.notify();
-      if (text && runMentions(text, needle)) { a.searching = null; return { run: e, text, searched }; }
     }
     a.searching = null;
-    return { run: null, text: null, searched };
+    hits.sort((x, y) => y.score - x.score || Date.parse(y.startedAt) - Date.parse(x.startedAt));
+    return { hits: hits.slice(0, 4), searched };
   }
 
   async ask(question, view, cx) {
@@ -133,16 +140,18 @@ export class AskSession {
         this.preparing = true;
         const found = await this.findRun(view, scope, needle, a, cx);
         searched = found.searched;
-        if (found.run && this.preparing) {
-          a.found = { id: String(found.run.id), startedAt: found.run.startedAt, status: found.run.status, needle };
+        if (found.hits.length && this.preparing) {
+          a.candidates = found.hits;
+          a.found = { ...found.hits[0], needle };
           cx.notify();
           const yes = await new Promise((resolve) => { a.confirm = resolve; });
           a.confirm = null;
           a.found.shared = yes;
-          if (yes) evidence = { ...runEvidence(found.text), needle };
+          if (yes) {
+            try { evidence = { ...runEvidence(await view.source.executionText(a.found.id)), needle }; } catch { a.found.shared = false; }
+          }
           searched = { ...searched, found: true };
         }
-        found.text = null;
         const stopped = !this.preparing;
         this.preparing = false;
         if (stopped || a.stopped) { a.streaming = false; a.stopped = true; cx.notify(); return; }
@@ -229,19 +238,48 @@ function consentCard(view, c) {
       .text_size(11).font_family(mono()).text_color(c.muted).child(String(view.asking.preview).slice(0, 20000))));
 }
 
+// The answer's one-line summary, on a card with colour flowing slowly behind it: four gradient panels in a strip
+// twice the card's width, swinging side to side natively (no timer), under a scrim that keeps the words readable.
+const FLOW_W = 520, FLOW_H = 220;
+let flowPaths = null;
+function flowStrip(c) {
+  if (!flowPaths) {
+    const cols = ["#ff7a5c", "#8b5cf6", "#22d3ee", "#ff9fb0", "#ff7a5c"];
+    flowPaths = cols.slice(0, -1).map((from, i) => {
+      const rect = PathBuilder.fill().add_polygon([[i * FLOW_W, 0], [(i + 1) * FLOW_W, 0], [(i + 1) * FLOW_W, FLOW_H], [i * FLOW_W, FLOW_H]], true).build();
+      return [rect, Background.linear_gradient(90, Background.stop(from, 0), Background.stop(cols[i + 1], 100))];
+    });
+  }
+  return div().absolute().top(0).left(0).w(FLOW_W * 4).h(FLOW_H).loop("left", { from: 0, to: -FLOW_W * 2, period: 16000, easing: "ease-in-out" })
+    .children(flowPaths.map(([rect, bg]) => window.paint_path(rect, bg).absolute().top(0).left(0).w(FLOW_W * 4).h(FLOW_H)));
+}
+
+function summaryCard(c, text, streaming, id) {
+  return div().id(`tldr-${id}`).relative().w_full().rounded(11).overflow_hidden().border(1).border_color(alpha(c.brand, 0.45))
+    .child(flowStrip(c).opacity(c.dark ? 0.32 : 0.22))
+    .child(div().absolute().top(0).left(0).size_full().bg(alpha(c.surface, c.dark ? 0.55 : 0.6)))
+    .child(h_flex().relative().px(14).py(11).gap(10).items_start()
+      .child(div().flex_none().mt(1).px(6).h(17).rounded(5).flex().items_center().bg(alpha(c.foreground, 0.12)).text_size(9.5).font_bold().text_color(c.foreground).child("TL;DR"))
+      .child(div().flex_1().min_w(0).text_size(13.5).font_medium().text_color(c.foreground).child(streaming && !text.endsWith(".") ? `${text} ▍` : text)));
+}
+
 // The run search's part of an answer: progress, the "send this run's data?" question, and what came of it.
 function runSearch(c, t) {
   const quote = (n) => `“${n.length > 60 ? `${n.slice(0, 60)}…` : n}”`;
   if (t.searching) {
     const { needle, done, total } = t.searching;
     return h_flex().gap(9).items_center().child(spinner(13, c.run))
-      .child(div().flex_1().min_w(0).text_size(12.3).text_color(c.muted).child(`Searching recent runs for ${quote(needle)} · ${done}/${total}`));
+      .child(div().flex_1().min_w(0).text_size(12.3).text_color(c.muted).child(`Searching recent runs for ${quote(needle)} · ${done}/${total}${t.searching.hits ? ` · ${t.searching.hits} mention it` : ""}`));
   }
   if (t.found && t.confirm) {
     const f = t.found;
     return v_flex().id(`found-${t.id}`).p(12).gap(10).rounded(10).bg(alpha(c.run, 0.08)).border(1).border_color(alpha(c.run, 0.4))
       .child(h_flex().gap(8).items_start().child(icon("search", 13, c.run).mt(2))
-        .child(div().flex_1().min_w(0).text_size(12.5).text_color(c.foreground).child(`Found run #${f.id}, ${when(Date.parse(f.startedAt))}, which mentions ${quote(f.needle)}.`)))
+        .child(div().flex_1().min_w(0).text_size(12.5).text_color(c.foreground).child(`Best match: run #${f.id}, ${when(Date.parse(f.startedAt))}, which mentions ${quote(f.needle)}${f.score > 1 ? ` (${f.score >= 5 ? "as a field value" : `${f.score} times`})` : ""}.`)))
+      .when((t.candidates ?? []).length > 1, (e) => e.child(h_flex().gap(6).items_center().flex_wrap()
+        .child(div().text_size(11.5).text_color(c.dim).child("Or pick another run that mentions it:"))
+        .children(t.candidates.map((cand) => chip(c, { id: `cand-${t.id}-${cand.id}`, label: `#${cand.id} · ${when(Date.parse(cand.startedAt))}`, active: cand.id === f.id,
+          onClick: (_e, cx) => { t.found = { ...cand, needle: f.needle }; cx.notify(); } })))))
       .child(div().text_size(12).text_color(c.muted).child("To work out what happened, Claude needs what that run's nodes produced: the first two items each node output, with secrets masked, up to 40 KB. It's sent for this question only."))
       .child(h_flex().gap(8).flex_wrap()
         .child(button(c, { id: `share-${t.id}`, label: "Send run data", iconName: "spark", kind: "primary", size: "sm", onClick: (_e, cx) => { t.confirm?.(true); cx.notify(); } }))
@@ -260,6 +298,7 @@ function runSearch(c, t) {
 
 function answer(c, t, i) {
   const md = t.text || "";
+  const parts = splitSummary(md);
   const search = runSearch(c, t);
   const thinking = t.streaming && !md && !t.searching && !t.confirm;
   return v_flex().id(`turn-${t.id}`).gap(10).p(16).rounded(14).bg(c.surface).border(1).border_color(t.error ? alpha(c.err, 0.4) : i === 0 && t.streaming ? alpha(c.brand, 0.5) : c.border)
@@ -274,7 +313,8 @@ function answer(c, t, i) {
     .when(thinking, (e) => e.child(h_flex().gap(8).items_center().h(22)
       .child(div().text_size(12.5).text_color(c.muted).child("Reading your workflows"))
       .child(div().w(24).text_size(12.5).text_color(c.brand).frames(["·", "··", "···", " ··", "  ·", ""], 180).child(""))))
-    .when(Boolean(md), (e) => e.child(TextView.markdown(`md-${t.id}`, safeMarkdown(t.streaming ? `${md} ▍` : md)).selectable(true).text_size(13).text_color(c.foreground)
+    .when(Boolean(parts.summary), (e) => e.child(summaryCard(c, parts.summary, t.streaming && !parts.rest, t.id)))
+    .when(Boolean(parts.rest), (e) => e.child(TextView.markdown(`md-${t.id}`, safeMarkdown(t.streaming ? `${parts.rest} ▍` : parts.rest)).selectable(true).text_size(13).text_color(c.foreground)
       .on_link_click((url) => openSafe(url))))
     .when(Boolean(t.error), (e) => e.child(h_flex().gap(8).items_start().child(icon("alert", 13, c.err)).child(div().flex_1().text_size(12.5).text_color(c.err).child(t.error))))
     .when(Boolean(t.stopped), (e) => e.child(div().text_size(11.5).text_color(c.dim).child("Stopped.")));
@@ -316,10 +356,17 @@ export function askView(view, c) {
   const width = view.size?.width ?? 0;
   const side = focus && width >= 960;
   const panelW = width >= 1320 ? 440 : 360;
+  const maxW = side ? 780 : 860;
+  // The question box stays put above the conversation, so a follow-up is always one click away however far down
+  // the last answer has been read.
   return h_flex().id("ask").size_full().items_start()
-    .child(v_flex().id("ask-scroll").flex_1().min_w(0).h_full().overflow_y_scrollbar().items_center()
-    .child(v_flex().w_full().max_w(side ? 780 : 860).px(20).py(20).gap(14)
-      .child(composer.map(rise(en, 0, 8)))
+    .child(v_flex().id("ask-col").flex_1().min_w(0).h_full()
+    .child(h_flex().flex_none().w_full().justify_center().px(20).pt(16).pb(10).border_b(1).border_color(turns.length ? c.border : "#00000000")
+      .child(div().w_full().max_w(maxW).child(composer.map(rise(en, 0, 8))).when(turns.length > 0 && !busy, (e) => e.child(h_flex().pt(6).gap(8).items_center()
+        .child(icon("chat", 11, c.dim)).child(div().flex_1().text_size(11).text_color(c.dim).child("Ask a follow-up: Claude remembers this conversation."))
+        .child(button(c, { id: "ask-clear", label: "New conversation", size: "sm", kind: "subtle", onClick: (_e, cx) => { s.turns = []; cx.notify(); } }))))))
+    .child(v_flex().id("ask-scroll").flex_1().min_h(0).w_full().overflow_y_scrollbar().items_center()
+    .child(v_flex().w_full().max_w(maxW).px(20).pt(14).pb(20).gap(14)
       .when(Boolean(s.pending), (e) => e.child(consentCard(view, c)))
       .when(s.installed === false, (e) => e.child(h_flex().px(12).py(9).gap(9).items_center().rounded(9).bg(alpha(c.warn, 0.1)).border(1).border_color(alpha(c.warn, 0.4))
         .child(icon("alert", 13, c.warn)).child(div().flex_1().min_w(0).text_size(12.3).child("Claude Code isn't installed here. Ask uses it to answer; everything else works without it."))))
@@ -333,8 +380,7 @@ export function askView(view, c) {
           .map(rise(en, 160 + i * 60, 8))
           .on_click((_e, cx) => view.ask(q, cx))
           .child(icon("spark", 13, c.brand)).child(div().flex_1().min_w(0).text_size(12.8).child(q)).child(icon("chevron", 12, c.dim)))))))
-      .children(turns.map((p, i) => v_flex().id(`pair-${p.q.id}`).gap(10).child(question(c, p.q)).child(answer(c, p.a, i))))
-      .when(turns.length > 0 && !busy, (e) => e.child(h_flex().justify_center().pt(4).child(button(c, { id: "ask-clear", label: "Clear conversation", size: "sm", kind: "subtle", onClick: (_e, cx) => { s.turns = []; cx.notify(); } }))))))
+      .children(turns.map((p, i) => v_flex().id(`pair-${p.q.id}`).gap(10).child(question(c, p.q)).child(answer(c, p.a, i)))))))
     .when(Boolean(side), (e) => e.child(focusPanel(view, c, focus, panelW)));
 }
 

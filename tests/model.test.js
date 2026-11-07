@@ -364,3 +364,17 @@ test("a quoted title finds its run, and only the first items of each node are sh
   const none = buildContext({ scope: "all", workflows: [], searched: { needle: "Q", count: 50, workflow: "W" } });
   assert.ok(none.includes("none mentions it"));
 });
+
+test("the run that made the article beats one that only lists it; answers split into a summary and the rest", async () => {
+  const { mentionScore, splitSummary } = await import("../mods/flowdeck/model.js");
+  const title = "Weekly Billing Digest for Acme Corp Accounts";
+  const listsIt = JSON.stringify({ existing: `Known articles: ${title}; Arc Mainnet private beta` });
+  const madeIt = JSON.stringify({ title, notion: { properties: { Name: title } }, body: "" });
+  assert.ok(mentionScore(madeIt, title) > mentionScore(listsIt, title), "an exact field value wins");
+  assert.equal(mentionScore(JSON.stringify({ a: "nothing here" }), title), 0);
+  const s = splitSummary("TL;DR: The Notion write failed because the page ID was empty.\n\n**Append Notion Update** got `id: null`.");
+  assert.equal(s.summary, "The Notion write failed because the page ID was empty.");
+  assert.ok(s.rest.startsWith("**Append Notion Update**"));
+  assert.equal(splitSummary("**TL;DR:** Short.\nMore").summary, "Short.");
+  assert.equal(splitSummary("No summary here.").summary, null);
+});
