@@ -134,7 +134,7 @@ function inspector(view, c, w, run) {
         .when(failedHere, (e2) => e2.child(h_flex().pt(4).child(button(c, { id: "insp-ask", label: "Ask Claude why", iconName: "spark", size: "sm", kind: "primary",
           onClick: (_e, cx) => { view.openDock(w, cx, { runId: run.id }); view.ask(`Why did "${n.name}" fail in "${w.name}", and how do I fix it?`, cx); } }))))))
       .when(Boolean(n.credentials), (e) => e.child(v_flex().gap(6).child(div().text_size(11).font_semibold().text_color(c.dim).child("CREDENTIALS"))
-        .children(Object.keys(n.credentials).map((k) => h_flex().gap(7).items_center().child(icon("lock", 12, c.dim)).child(div().text_size(12).text_color(c.muted).child(k))))))
+        .children(Object.keys(n.credentials).map((k) => h_flex().gap(7).items_center().child(icon("lock", 12, c.dim)).child(div().flex_1().min_w(0).truncate().text_size(12).text_color(c.muted).child(k))))))
       .child(v_flex().gap(6)
         .child(h_flex().justify_between().child(div().text_size(11).font_semibold().text_color(c.dim).child("PARAMETERS")).child(div().text_size(10.5).text_color(c.dim).child("secrets hidden")))
         .child(div().p(10).rounded(8).bg(c.background).border(1).border_color(c.border).text_size(11.3).font_family(mono()).text_color(c.muted).child(shown === "{}" ? "No parameters set" : shown))));

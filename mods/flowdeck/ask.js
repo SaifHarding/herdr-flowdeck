@@ -162,13 +162,13 @@ function consentCard(view, c) {
   const s = view.asking.scope;
   const what = s.kind === "all" ? "a summary of every workflow (names, node types, run counts and recent errors)" : `the "${s.label}" workflow: its nodes, their settings and its recent errors`;
   return card(c).id("consent").p(18).gap(12).border_color(alpha(c.brand, 0.5)).map(rise(true, 0))
-    .child(h_flex().gap(10).items_center().child(icon("shield", 17, c.brand)).child(div().text_size(14).font_semibold().child("Before your first question")))
+    .child(h_flex().gap(10).items_center().child(icon("shield", 17, c.brand)).child(div().flex_1().min_w(0).text_size(14).font_semibold().child("Before your first question")))
     .child(div().text_size(12.8).text_color(c.foreground).child(`To answer, Flowdeck sends ${what} from ${view.profile?.name ?? "this instance"} to Claude, through your own Claude Code sign-in. You'll be asked again for other instances, and before sending a summary of every workflow.`))
     .child(v_flex().gap(6)
-      .child(h_flex().gap(8).items_start().child(icon("check", 13, c.ok)).child(div().text_size(12.3).text_color(c.muted).child("Never sent: credentials, pinned data, or the items your runs processed.")))
-      .child(h_flex().gap(8).items_start().child(icon("check", 13, c.ok)).child(div().text_size(12.3).text_color(c.muted).child("Fields named like secrets, and values that look like keys or tokens, are masked first.")))
-      .child(h_flex().gap(8).items_start().child(icon("check", 13, c.ok)).child(div().text_size(12.3).text_color(c.muted).child("Claude runs with every tool switched off: it can read what's sent and write an answer, nothing else."))))
-    .child(h_flex().gap(10).pt(2)
+      .child(h_flex().gap(8).items_start().child(icon("check", 13, c.ok).mt(2)).child(div().flex_1().min_w(0).text_size(12.3).text_color(c.muted).child("Never sent: credentials, pinned data, or the items your runs processed.")))
+      .child(h_flex().gap(8).items_start().child(icon("check", 13, c.ok).mt(2)).child(div().flex_1().min_w(0).text_size(12.3).text_color(c.muted).child("Fields named like secrets, and values that look like keys or tokens, are masked first.")))
+      .child(h_flex().gap(8).items_start().child(icon("check", 13, c.ok).mt(2)).child(div().flex_1().min_w(0).text_size(12.3).text_color(c.muted).child("Claude runs with every tool switched off: it can read what's sent and write an answer, nothing else."))))
+    .child(h_flex().gap(8).pt(2).flex_wrap()
       .child(button(c, { id: "consent-yes", label: "Ask Claude", iconName: "spark", kind: "primary", onClick: (_e, cx) => { view.asking.consent(view); const q = view.asking.pending; view.asking.pending = null; view.asking.preview = null; if (q) view.ask(q, cx); } }))
       .child(button(c, { id: "consent-see", label: view.asking.preview ? "Hide what's sent" : "See exactly what's sent", iconName: "eye", kind: "ghost", onClick: (_e, cx) => {
         view.asking.preview = view.asking.preview ? null : view.asking.contextFor(view);
@@ -241,7 +241,7 @@ export function askView(view, c) {
       .child(composer.map(rise(en, 0, 8)))
       .when(Boolean(s.pending), (e) => e.child(consentCard(view, c)))
       .when(s.installed === false, (e) => e.child(h_flex().px(12).py(9).gap(9).items_center().rounded(9).bg(alpha(c.warn, 0.1)).border(1).border_color(alpha(c.warn, 0.4))
-        .child(icon("alert", 13, c.warn)).child(div().text_size(12.3).child("Claude Code isn't installed here. Ask uses it to answer; everything else works without it."))))
+        .child(icon("alert", 13, c.warn)).child(div().flex_1().min_w(0).text_size(12.3).child("Claude Code isn't installed here. Ask uses it to answer; everything else works without it."))))
       .when(!turns.length && !s.pending, (e) => e.child(v_flex().pt(18).gap(14).map(rise(en, 100, 8))
         .child(v_flex().items_center().gap(8)
           .child(h_flex().size(46).rounded(14).items_center().justify_center().bg(alpha(c.brand, 0.14)).child(icon("spark", 22, c.brand)))

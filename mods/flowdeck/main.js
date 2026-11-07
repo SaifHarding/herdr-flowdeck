@@ -749,8 +749,8 @@ export default class Flowdeck extends View {
           }))))
         .child(div().h(1).bg(c.border).my(4))
         .child(v_flex().px(10).py(6).gap(4)
-          .child(h_flex().gap(7).items_center().child(icon("shield", 13, c.ok)).child(div().text_size(11.5).text_color(c.muted).child("Read-only. Flowdeck never changes your n8n.")))
-          .child(h_flex().gap(7).items_center().child(icon("lock", 13, c.dim)).child(div().text_size(11.5).text_color(c.muted)
+          .child(h_flex().gap(7).items_center().child(icon("shield", 13, c.ok)).child(div().flex_1().min_w(0).text_size(11.5).text_color(c.muted).child("Read-only. Flowdeck never changes your n8n.")))
+          .child(h_flex().gap(7).items_center().child(icon("lock", 13, c.dim)).child(div().flex_1().min_w(0).text_size(11.5).text_color(c.muted)
             .child(this.profile?.mode === "demo" ? "Demo: no key stored." : `Key in ${this.profile?.vault === "session" ? "memory only" : this.vault === "secret-service" ? "the system keyring" : "the macOS Keychain"} ${this.profile?.tail ?? ""}`))))
         .when(this.profile?.mode !== "demo", (e) => e.child(row("disconnect", "trash", "Disconnect and forget key", "Removes the key from this machine", (cx) => cx.spawn(async (cx) => this.disconnect(cx)), { danger: true }))));
   }
