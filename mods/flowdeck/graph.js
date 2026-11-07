@@ -283,7 +283,9 @@ function sprite(c, state, graph, z, focus) {
         .when(mood === "error", (e) => e.loop("opacity", { from: 0.55, to: 1, period: 800 }))
         .child(div().text_size(11).font_bold().text_color("#ffffff").child(MOODS[mood].text))
       : null;
-  return div().id("flo").absolute().left(x).spring("left", HOP).top(y).spring("top", HOP).w(S).h(S)
+  // A hop between nodes bounces; a zoom lands at once, so Flo stays on its node instead of bouncing after it.
+  const hop = state.anim ? SNAP : HOP;
+  return div().id("flo").absolute().left(x).spring("left", hop).top(y).spring("top", hop).w(S).h(S)
     .tooltip(focus.label ?? `Focus: ${n.name}`)
     // A shadow on the card's edge, breathing with the bob.
     .child(div().absolute().left(S * 0.18).top(S - 3).w(S * 0.64).h(5).rounded(3).bg(alpha("#000000", c.dark ? 0.55 : 0.25))

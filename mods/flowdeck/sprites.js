@@ -31,9 +31,17 @@ export const spriteKind = () => (SPRITES.some((s) => s.id === shared(SPRITE_KEY)
 export const motionPrefs = { reduced: false };
 
 const ORANGE = "#f97316", GREEN = "#4ade80";
-// A move's steps glide; while the view itself is zooming, sprites keep up with it instead.
+// Where a sprite sits is always a spring, never a transition: Herdr starts an animated property from the value it
+// last animated, so switching a sprite between a transition and none (as a zoom used to) sent it back to where it
+// was before the zoom, then gliding home. While it travels, the spring is short and smooth between move steps; while
+// it dwells or the view zooms, it's one that lands in the same frame, so the sprite stays pinned to its node.
 let zooming = false;
-const GLIDE = (ms = TICK) => ({ duration: zooming ? 1 : ms, easing: "linear" });
+const LAND = { response: 300, damping: 1, epsilon: 100000 };
+const STEP = { response: 140, damping: 1 };
+const place = (el, left, top, moving) => {
+  const p = moving && !zooming ? STEP : LAND;
+  return el.left(left).spring("left", p).top(top).spring("top", p);
+};
 
 // ── Pixel art ─────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -127,18 +135,19 @@ function drawGoose(c, { m, graph, z, px, reduced, mood }) {
     ? h_flex().absolute().left((flip ? -30 : 22) + G_PAD[0] * px).top(-16 + G_PAD[1] * px).w(46).h(16).rounded(3).items_center().justify_center().bg("#f4f4f5")
       .child(div().text_size(10).font_bold().font_family("JetBrains Mono").text_color("#18181b").child("HONK!"))
     : moodBubble(c, mood, G_COLS * px * 0.6, 0);
-  return { el: div().id("fs-goose").absolute().left(ox).transition("left", GLIDE()).top(oy).transition("top", GLIDE())
+  return { el: place(div().id("fs-goose").absolute(), ox, oy, Boolean(m.moving))
     .w(G_COLS * px).h(G_ROWS * px).children(poses).when(Boolean(bubble), (e) => e.child(bubble)), shake: m.honk ? n.name : null };
 }
 
 // ── 2. Brackets ───────────────────────────────────────────────────────────────────────────────────────────────
 
-// One corner: an arm across and an arm down, pointing into the box.
-function corner(id, x, y, arm, T, sx, sy, color, motion) {
-  const el = div().id(id).absolute().w(arm).h(arm)
-    .child(div().absolute().left(sx > 0 ? 0 : 0).top(sy > 0 ? 0 : arm - T).w(arm).h(T).bg(color))
+// One corner: an arm across and an arm down, pointing into the box. The outer element is the one placed (and holds
+// the id its spring keys on); `wrap` places it and adds the mark, breathing or still.
+function corner(id, x, y, arm, T, sx, sy, color, wrap) {
+  const mark = div().absolute().w(arm).h(arm)
+    .child(div().absolute().left(0).top(sy > 0 ? 0 : arm - T).w(arm).h(T).bg(color))
     .child(div().absolute().left(sx > 0 ? 0 : arm - T).top(0).w(T).h(arm).bg(color));
-  return motion(el, sx > 0 ? x : x - arm, sy > 0 ? y : y - arm);
+  return wrap(div().id(id).absolute().w(arm).h(arm), sx > 0 ? x : x - arm, sy > 0 ? y : y - arm, mark);
 }
 
 function drawBrackets(c, { m, graph, z, px, reduced, mood }) {
@@ -153,10 +162,9 @@ function drawBrackets(c, { m, graph, z, px, reduced, mood }) {
     const arm = Math.max(T, Math.min(snap(8, px), Math.floor(w / 2), Math.floor(h / 2)));
     const d = reduced ? 0 : 1.5, period = 2640;
     // Breathing: every corner swings 1.5 px in and out together, and the marks brighten as they open.
-    const motion = (sx, sy) => (el, left, top) => (d
-      ? el.left(left).loop("left", { from: left - sx * d, to: left + sx * d, period, easing: "ease-in-out" })
-        .top(top).loop("top", { from: top - sy * d, to: top + sy * d, period, easing: "ease-in-out" })
-      : el.left(left).top(top));
+    // Breathing rides on an inner element, so the corner itself stays on a landing spring like every sprite position.
+    const motion = (sx, sy) => (el, left, top, mark) => place(el, left, top, false)
+      .child(d && !zooming ? mark.left(0).loop("left", { from: -sx * d, to: sx * d, period, easing: "ease-in-out" }).top(0).loop("top", { from: -sy * d, to: sy * d, period, easing: "ease-in-out" }) : mark.left(0).top(0));
     for (const [cx, cy, sx, sy, k] of [[x, y, 1, 1, "tl"], [x + w, y, -1, 1, "tr"], [x, y + h, 1, -1, "bl"], [x + w, y + h, -1, -1, "br"]]) {
       kids.push(corner(`fs-b-${k}`, snap(cx), snap(cy), arm, T, sx, sy, color, motion(sx, sy)));
     }
@@ -180,7 +188,7 @@ function drawBrackets(c, { m, graph, z, px, reduced, mood }) {
   }
   const [x, y, w, h] = r.map((v) => snap(v));
   const arm = Math.max(T, Math.min(snap(8, px), Math.floor(w / 2), Math.floor(h / 2)));
-  const glide = (el, left, top) => el.left(left).transition("left", GLIDE()).top(top).transition("top", GLIDE());
+  const glide = (el, left, top, mark) => place(el, left, top, true).child(mark);
   for (const [cx, cy, sx, sy, k] of [[x, y, 1, 1, "tl"], [x + w, y, -1, 1, "tr"], [x, y + h, 1, -1, "bl"], [x + w, y + h, -1, -1, "br"]]) {
     kids.push(corner(`fs-b-${k}`, cx, cy, arm, T, sx, sy, color, glide));
   }
@@ -252,7 +260,7 @@ function drawProbe(c, { m, graph, z, px, reduced, mood, state }) {
   const bubble = moodBubble(c, mood, 12 * px * 0.7, -2);
   return {
     el: div().id("fs-probe").absolute().top(0).left(0).children(under)
-      .child(div().id("fs-probe-at").absolute().left(ox).transition("left", GLIDE()).top(oy).transition("top", GLIDE()).w(12 * px).h(P_ROWS * px)
+      .child(place(div().id("fs-probe-at").absolute(), ox, oy, Boolean(m.moving)).w(12 * px).h(P_ROWS * px)
         .child(body).when(Boolean(bubble), (e) => e.child(bubble))),
     shake: null,
   };
