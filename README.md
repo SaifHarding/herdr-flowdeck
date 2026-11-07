@@ -1,8 +1,10 @@
 # Flowdeck for n8n
 
+Monitor and debug your n8n workflows without leaving [Herdr](https://herdr.dev). Connect an instance with an API key and every workflow is drawn as a live graph, with any run laid over it and the failing node lit red. Failures are grouped by cause, and a toast fires the moment a run fails. Ask Claude why something broke while a pixel-art sprite walks the graph to the node it blames. Read-only, with keys kept in your system keychain, and a demo instance to try first.
+
 ![Flowdeck: monitor and debug your n8n workflows from Herdr](docs/hero.png)
 
-Your n8n instance in a [Herdr](https://herdr.dev) pane. Connect it with an API key and you get:
+## What you get
 
 - **Overview**: how the instance is doing right now. Runs, success rate, failures and median duration over 24 hours, compared with yesterday. An hour-by-hour activity chart (or day by day for the week), the busiest workflows, what needs attention, and a live feed of runs as they land.
 - **Workflows**: every workflow drawn as a live graph, laid out the way you arranged it in n8n. Pick any run from the strip above the graph and its path lights up: green for nodes that ran, red and pulsing for the one that failed, faded for nodes the run never reached. Replay walks a run node by node. Click a node to inspect its settings, with secrets hidden. Pan as in n8n: hold the scroll wheel and drag (or drag empty canvas), and ⌘/Ctrl-scroll to zoom.
