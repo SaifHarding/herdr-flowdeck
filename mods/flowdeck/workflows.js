@@ -97,7 +97,7 @@ function runBar(view, c, w, s, run) {
   return h_flex().id("run-bar").px(16).py(10).gap(14).items_center().border_b(1).border_color(c.border).flex_none()
     .child(v_flex().gap(2).flex_none()
       .child(div().text_size(11).font_semibold().text_color(c.dim).child("RUNS · 7 DAYS"))
-      .child(div().text_size(11.5).text_color(c.muted).child(view.source?.has.executions ? `${s?.runs.length ?? 0} runs, ${s?.fails7 ?? 0} failed` : "Needs an API key")))
+      .child(div().text_size(11.5).text_color(c.muted).child(`${s?.runs.length ?? 0} runs, ${s?.fails7 ?? 0} failed`)))
     .child(div().flex_1().min_w(0).overflow_hidden().child(runs.length ? runStrip(c, { id: "big-strip", runs, count: 48, height: 22, width: 5, gap: 2, selected: sel, onPick: (r, cx) => view.pickRun(r.id, cx) }) : div().text_size(12).text_color(c.dim).child("No runs yet")))
     .when(Boolean(e), (el) => el.child(h_flex().gap(10).items_center().flex_none()
       .child(dot(statusColor(c, st), 8, running(e)))
@@ -163,7 +163,7 @@ export function workflowsView(view, c) {
   const w = m.byId.get(view.sel.workflowId);
   const s = w ? m.stats.get(w.id) : null;
   const run = view.sel.runId ? view.data.runs.get(String(view.sel.runId)) ?? null : null;
-  const graph = w && !w.partial ? view.graphOf(w) : null;
+  const graph = w ? view.graphOf(w) : null;
   const base = view.profile?.base;
   const notify = (cx) => cx.notify();
 
@@ -182,9 +182,7 @@ export function workflowsView(view, c) {
         .child(button(c, { id: "wf-ask", label: view.dockOpen ? "Asking Claude" : "Ask about this", iconName: "spark", size: "sm", kind: view.dockOpen ? "solid" : "ghost",
           onClick: (_e, cx) => (view.dockOpen ? view.closeDock(cx) : view.openDock(w, cx)) }))
         .when(view.profile?.mode !== "demo", (e) => e.child(button(c, { id: "wf-open", label: "Open in n8n", iconName: "external", size: "sm", onClick: () => view.openLink(links.workflow(base, w.id)) }))));
-    const canvas = w.partial
-      ? v_flex().flex_1().items_center().justify_center().gap(10).child(w.detailError ? icon("alert", 18, c.warn) : spinner(18, c.brand)).child(div().text_size(12).text_color(c.muted).child(w.detailError ?? "Loading the workflow…"))
-      : div().id("canvas-wrap").relative().flex_1().min_w(0).h_full()
+    const canvas = div().id("canvas-wrap").relative().flex_1().min_w(0).h_full()
         .child(graphView(c, { id: "graph", graph, state: view.graph, run, replay: view.replay, selected: view.sel.node, active: w.active, focus: (view.dockOpen && !view.replay && claudeFocus(view, w.id)) || focusOf(view, graph, run),
           onSelect: (name, cx) => { view.sel.node = name; cx.notify(); }, onChange: notify }))
         .child(div().absolute().bottom(14).right(14).child(graphControls(c, { id: "gc", state: view.graph, graph, onChange: notify })))
@@ -193,12 +191,12 @@ export function workflowsView(view, c) {
             .child(h_flex().gap(5).items_center().child(dot(c.ok, 7)).child(div().child("ran")))
             .child(h_flex().gap(5).items_center().child(dot(c.err, 7)).child(div().child("failed")))
             .child(h_flex().gap(5).items_center().child(div().size(7).rounded(4).bg(c.dim).opacity(0.5)).child(div().child("not reached"))))
-          .when(!run, (e) => e.child(div().child(view.source?.has.executions ? "Pick a run above to see its path" : "Drag to pan · ⌘-scroll to zoom"))))
+          .when(!run, (e) => e.child(div().child("Pick a run above to see its path"))))
         .when(Boolean(view.replay), (e) => e.child(h_flex().absolute().top(14).left(14).gap(8).px(11).py(7).items_center().rounded(8).bg(c.popover ?? c.surface).border(1).border_color(alpha(c.run, 0.5)).shadow_md()
           .child(spinner(12, c.run)).child(div().text_size(12).child(`Replaying · ${Math.min(view.replay.step, view.replay.total)} of ${view.replay.total}`))));
     main = v_flex().flex_1().min_w(0).h_full()
       .child(head)
-      .when(Boolean(view.source?.has.executions), (e) => e.child(runBar(view, c, w, s, run)))
+      .child(runBar(view, c, w, s, run))
       .child(h_flex().flex_1().min_h(0).w_full().items_stretch().child(canvas)
         .when(Boolean(view.sel.node) && (!view.dockOpen || view.inspectFromDock), (e) => e.child(inspector(view, c, w, run) ?? div()))
         .when(Boolean(view.dockOpen), (e) => e.child(askDock(view, c, w))));

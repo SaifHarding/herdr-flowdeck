@@ -269,7 +269,7 @@ export function claudeFocus(view, onlyWorkflow = null) {
     const name = lastMentioned(text, view.data.workflows.map((w) => w.name));
     wf = view.data.workflows.find((w) => w.name === name) ?? null;
   }
-  if (!wf || wf.partial || !(wf.nodes ?? []).length) return null;
+  if (!wf || !(wf.nodes ?? []).length) return null;
   if (onlyWorkflow && wf.id !== onlyWorkflow) return null;
   // Flo walks the nodes in the order Claude names them, one hop per tick of the session's walk timer, however fast
   // the text itself arrives.

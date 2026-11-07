@@ -23,9 +23,7 @@ Flowdeck handles a credential that can read everything in an n8n instance. This 
   - Plain `http://` is accepted without asking only for this machine (`localhost`, `*.localhost`, `127.0.0.0/8`, `::1`, `host.docker.internal`).
   - Plain http to a private network (RFC 1918, link-local, 100.64/10, `*.local`, `*.lan`, `*.internal`, `*.home.arpa`, `*.ts.net`) needs an explicit "Allow plain http on this network" opt-in. After that, the header shows an amber **HTTP** badge for as long as the instance is used, because a laptop carries a home address like `192.168.1.50` to every café whose network uses the same range.
   - Cloud metadata addresses are refused, and so are URLs with a user name or password in them.
-- **Read-only.**
-  - REST: only `GET /api/v1/workflows`, `GET /api/v1/executions` and `GET /api/v1/executions/:id`, with execution ids checked against `[A-Za-z0-9_-]{1,64}`.
-  - MCP: `initialize`, plus `tools/call` for `search_workflows` and `get_workflow_details`. Any other tool throws before a request is made.
+- **Read-only.** Only `GET /api/v1/workflows`, `GET /api/v1/executions` and `GET /api/v1/executions/:id`, with execution ids checked against `[A-Za-z0-9_-]{1,64}`.
 - **Bounded.**
   - Paging stops after 20 pages, on an empty page, or on a cursor the server already gave.
   - Lists are cut to 1,000 workflows and 3,000 executions (7 days), with 250 items a page.

@@ -1,4 +1,4 @@
-// Flowdeck: n8n in a Herdr pane. Connect an instance with an API key (or an MCP token), then see how it's doing, what
+// Flowdeck: n8n in a Herdr pane. Connect an instance with an API key, then see how it's doing, what
 // each workflow looks like and how its runs went, what's failing and why, and ask Claude about any of it.
 //
 // Open it as a tab: herdr-app do tab.new --name n8n --mod flowdeck   (or mod.open:flowdeck for a quick look).
@@ -212,7 +212,7 @@ export default class Flowdeck extends View {
 
   async connect(cx) {
     if (this.form.busy) return;
-    // The MCP server URL pasted into the token field: put it where it belongs if that's empty, and say what's missing.
+    // An address pasted into the key field: put it where it belongs if that's empty, and say what's missing.
     const pasted = checkKey(this.inputs.key.value());
     if (pasted.url) {
       if (!this.inputs.url.value().trim()) this.inputs.url.set_value(pasted.url);
@@ -265,6 +265,7 @@ export default class Flowdeck extends View {
     cx.notify();
     try {
       if (!source) {
+        if (profile.mode === "mcp") throw new N8nError("Flowdeck no longer connects over MCP. Connect this instance again with an API key.", "nokey");
         // Shared state is writable by any mod: check the stored address against the same rules as the connect form
         // before a key goes anywhere near it.
         if (profile.mode !== "demo") {
@@ -326,13 +327,12 @@ export default class Flowdeck extends View {
     if (!quiet) cx.notify();
     try {
       if (full || !d.workflows.length) {
-        const [workflows, executions] = await Promise.all([source.workflows(), source.has.executions ? source.executions() : []]);
+        const [workflows, executions] = await Promise.all([source.workflows(), source.executions()]);
         if (this.source !== source) return;
-        // MCP gives outlines first; keep details already fetched.
-        d.workflows = workflows.map((w) => (w.partial && d.workflows.find((o) => o.id === w.id && !o.partial)) || w);
+        d.workflows = workflows;
         this.mergeRuns(executions, cx, true);
         d.fullAt = Date.now();
-      } else if (source.has.executions) {
+      } else {
         const recent = await source.recent();
         if (this.source !== source) return;
         this.mergeRuns(recent, cx, false);
@@ -459,20 +459,6 @@ export default class Flowdeck extends View {
     cx.notify();
   }
 
-  // MCP outlines have no nodes until asked for.
-  async ensureWorkflow(id, cx) {
-    const d = this.data, i = d.workflows.findIndex((w) => w.id === id);
-    if (i < 0 || !d.workflows[i].partial || !this.source?.workflow) return;
-    try {
-      const full = await this.source.workflow(id);
-      d.workflows = d.workflows.map((w) => (w.id === id ? { ...w, ...full, partial: false } : w));
-      d.version++;
-    } catch (e) {
-      d.workflows = d.workflows.map((w) => (w.id === id ? { ...w, detailError: e.message } : w));
-    }
-    cx.notify();
-  }
-
   // Everything views read, worked out once per change of data (or minute, for "24h" windows).
   derived() {
     const d = this.data, now = Date.now(), minute = Math.floor(now / 60e3);
@@ -525,7 +511,6 @@ export default class Flowdeck extends View {
     this.sel.node = node;
     this.sel.runId = runId;
     cx.spawn(async (cx) => {
-      await this.ensureWorkflow(id, cx);
       const s = this.derived().stats.get(id);
       const pick = runId ?? s?.runs.find((r) => !running(r))?.id ?? null;
       if (pick && this.source?.has.details) await this.fetchRuns([String(pick)], cx);
@@ -624,7 +609,6 @@ export default class Flowdeck extends View {
     if (this.tab !== "ask" && !(this.tab === "workflows" && this.dockOpen)) this.go("ask", cx);
     cx.spawn(async (cx) => {
       const sc = this.asking.scope;
-      if (sc.kind !== "all") await this.ensureWorkflow(sc.workflowId, cx);
       if (sc.kind === "failure" && sc.runId) await this.fetchRuns([String(sc.runId)], cx);
       await this.asking.ask(question, this, cx);
     });
@@ -674,7 +658,7 @@ export default class Flowdeck extends View {
     const unseen = m.groups.filter((g) => startOf(g.latest) > seen).length;
     const compact = (this.size?.width ?? 1200) < 980;
     const live = !d.error && d.synced && Date.now() - d.synced < POLL_MS * 3;
-    const modeTag = p?.mode === "mcp" ? "MCP" : p?.mode === "demo" ? "DEMO" : "API";
+    const modeTag = p?.mode === "demo" ? "DEMO" : "API";
     const nav = TABS.map((t) => {
       const on = this.tab === t.id;
       const badge = t.id === "failures" ? (unseen || null) : null;
@@ -718,7 +702,6 @@ export default class Flowdeck extends View {
       .when(fix, (el) => el.child(button(c, { id: "reconnect", label: "Reconnect", size: "sm", kind: "solid", onClick: (_e, cx) => {
         this.inputs.url.set_value(this.profile?.base ?? "");
         this.inputs.name.set_value(this.profile?.name ?? "");
-        this.form.mode = this.profile?.mode === "mcp" ? "mcp" : "api";
         cx.spawn(async (cx) => { if (this.profile?.mode !== "demo") { await deleteSecret(this.profile.id, this.profile.base); setShared(PROFILES, this.profiles().filter((x) => x.id !== this.profile.id)); } this.showConnect(cx); cx.notify(); });
       } })))
       .when(!fix, (el) => el.child(button(c, { id: "retry", label: "Retry", size: "sm", onClick: (_e, cx) => cx.spawn(async (cx) => this.refresh(cx, { full: true })) })));
@@ -738,7 +721,7 @@ export default class Flowdeck extends View {
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .opacity(1)
         .child(div().px(10).pt(6).pb(4).text_size(11).font_semibold().text_color(c.dim).child("INSTANCES"))
-        .children(ps.map((p) => row(`p-${p.id}`, p.mode === "mcp" ? "plug" : "key", p.name, `${p.base.replace(/^https?:\/\//, "")} · ${p.mode === "mcp" ? "MCP" : "API"} ${p.tail ?? ""}`, (cx) => this.switchTo(p.id, cx), { active: this.profile?.id === p.id })))
+        .children(ps.map((p) => row(`p-${p.id}`, "key", p.name, `${p.base.replace(/^https?:\/\//, "")} · ${p.tail ?? ""}`, (cx) => this.switchTo(p.id, cx), { active: this.profile?.id === p.id })))
         .child(row("p-demo", "play", "Demo instance", "Made-up data, nothing leaves your machine", (cx) => this.switchTo("demo", cx), { active: this.profile?.mode === "demo" }))
         .child(row("add", "plus", "Connect another instance", null, (cx) => { this.menu = false; this.inputs.url.set_value(""); this.showConnect(cx, { adding: true }); cx.notify(); }))
         .child(div().h(1).bg(c.border).my(4))

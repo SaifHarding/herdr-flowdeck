@@ -47,7 +47,7 @@ function detail(view, c, m, g) {
   const demo = view.profile?.mode === "demo";
   const en = Boolean(view.entered.failures);
   if (!view.failGraph || view.failGraph.key !== g.key) { view.failGraph = new GraphState(); view.failGraph.key = g.key; view.failGraph.entered = true; view.failGraph.pad = 20; }
-  const graph = w && !w.partial ? view.graphOf(w) : null;
+  const graph = w ? view.graphOf(w) : null;
   const toneColor = h?.tone === "rate" || h?.tone === "network" ? c.warn : h?.tone === "auth" ? c.brand : c.run;
 
   return v_flex().id("fail-detail").flex_1().min_w(0).h_full().overflow_y_scrollbar().p(20).gap(16)
@@ -107,8 +107,6 @@ function detail(view, c, m, g) {
 export function failuresView(view, c) {
   const m = view.derived();
   if (view.data.loading) return v_flex().size_full().items_center().justify_center().child(spinner(20, c.brand));
-  if (!view.source?.has.executions) return empty(c, { iconName: "key", title: "Failures need an API key", body: "n8n's MCP server shares workflows but not their runs. Connect the same instance with an API key to see what's failing.",
-    action: button(c, { id: "add-api", label: "Connect with an API key", iconName: "key", kind: "primary", onClick: (_e, cx) => { view.form.mode = "api"; view.inputs.url.set_value(view.profile?.base ?? ""); view.showConnect(cx, { adding: true }); cx.notify(); } }) });
   const f = view.sel.failFilter;
   const groups = m.groups.filter((g) => f !== "24h" || g.last24 > 0);
   if (!m.groups.length) return empty(c, { iconName: "check", title: "Nothing failing", body: "No run has failed in the last 7 days. Flowdeck will toast you the moment one does." });

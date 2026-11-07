@@ -1,4 +1,4 @@
-// A stand-in n8n for testing Flowdeck: the public REST API (X-N8N-API-KEY), the instance MCP endpoint (Bearer),
+// A stand-in n8n for testing Flowdeck: the public REST API (X-N8N-API-KEY),
 // /healthz, and a redirect trap that reports whether a credential header followed a redirect to another port.
 // node tools/mock-n8n.mjs [port]   (from the repo root; a second copy on 5680 catches leaked keys)
 import http from "node:http";
@@ -8,7 +8,7 @@ import { pathToFileURL } from "node:url";
 const demoPath = new URL("../mods/flowdeck/demo.js", import.meta.url).pathname;
 const PORT = Number(process.argv[2] ?? 5679);
 const { demoInstance, demoExecution } = await import(pathToFileURL(demoPath).href);
-const API_KEY = "demo-key-0123456789abcdef", MCP_TOKEN = "mcp-token-0123456789abcdef";
+const API_KEY = "demo-key-0123456789abcdef";
 const inst = demoInstance();
 const log = (line) => fs.appendFileSync(new URL("./mock-n8n.log", import.meta.url), `${new Date().toISOString()} ${line}\n`);
 
@@ -60,26 +60,6 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, e);
     }
     return send(res, 404, { message: "Not Found" });
-  }
-  if (url.pathname === "/mcp-server/http" && req.method === "POST") {
-    if (req.headers.authorization !== `Bearer ${MCP_TOKEN}`) return send(res, 401, { error: "unauthorized" });
-    let body = "";
-    for await (const c of req) body += c;
-    const msg = JSON.parse(body);
-    if (msg.id === undefined) { res.writeHead(202); return res.end(); }
-    let result;
-    if (msg.method === "initialize") result = { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "n8n MCP Server", version: "1.0.0" } };
-    else if (msg.method === "tools/list") result = { tools: [{ name: "search_workflows" }, { name: "get_workflow_details" }, { name: "execute_workflow" }] };
-    else if (msg.method === "tools/call" && msg.params.name === "search_workflows") {
-      const data = inst.workflows.map(({ id, name, active, createdAt, updatedAt, nodes }) => ({ id, name, active, createdAt, updatedAt, triggerCount: 1, nodes: nodes.map((n) => ({ name: n.name, type: n.type })) }));
-      result = { content: [{ type: "text", text: JSON.stringify({ data, count: data.length }) }], structuredContent: { data, count: data.length } };
-    } else if (msg.method === "tools/call" && msg.params.name === "get_workflow_details") {
-      const w = inst.workflows.find((x) => x.id === msg.params.arguments.workflowId);
-      result = w ? { content: [{ type: "text", text: JSON.stringify({ workflow: w, triggerInfo: "Triggered by its first node." }) }] }
-        : { isError: true, content: [{ type: "text", text: "Workflow not found" }] };
-    } else return send(res, 200, { jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "Method not found" } });
-    res.writeHead(200, { "content-type": "text/event-stream" });
-    return res.end(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: msg.id, result })}\n\n`);
   }
   send(res, 404, { message: "Not Found" });
 });

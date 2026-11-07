@@ -1,4 +1,4 @@
-// The first thing a person sees: connect an n8n instance with an API key or an MCP token, or look around with demo
+// The first thing a person sees: connect an n8n instance with an API key, or look around with demo
 // data. Everything that keeps the key safe is said here, next to the field it's typed into.
 
 import { div } from "gpui-kit";
@@ -33,19 +33,6 @@ function field(c, { id, labelText, input, focused, trailing, hint }) {
       .when(Boolean(trailing), (e) => e.child(trailing)));
 }
 
-function segmented(c, value, onPick) {
-  const opt = (id, text, iconName) => {
-    const on = value === id;
-    return h_flex().id(`mode-${id}`).flex_1().h(32).gap(7).items_center().justify_center().rounded(7).cursor_pointer()
-      .text_size(12.5).font_medium().text_color(on ? c.foreground : c.muted)
-      .bg(on ? c.surface : "#00000000").when(on, (e) => e.shadow_sm())
-      .hover((s) => s.text_color(c.foreground))
-      .on_click((_e, cx) => onPick(id, cx))
-      .child(icon(iconName, 13, on ? c.brand : c.dim)).child(div().child(text));
-  };
-  return h_flex().p(3).gap(3).rounded(10).bg(alpha(c.foreground, 0.06)).child(opt("api", "API key", "key")).child(opt("mcp", "MCP token", "plug"));
-}
-
 function toggle(c, { id, on, labelText, sub, disabled, onToggle }) {
   return h_flex().id(id).gap(11).items_center().cursor_pointer().when(disabled, (e) => e.opacity(0.55))
     .on_click((_e, cx) => { if (!disabled) onToggle(cx); })
@@ -62,19 +49,15 @@ const trust = (c, iconName, title, body, color) => h_flex().flex_1().gap(9).item
 
 export function connectView(view, c) {
   const f = view.form, en = f.entered;
-  const mcp = f.mode === "mcp";
   const where = vaultName(view.vault);
   const canRemember = view.vault && view.vault !== "session";
   const eye = h_flex().id("eye").size(24).items_center().justify_center().rounded(5).cursor_pointer().hover((s) => s.bg(c.hover))
     .tooltip(f.show ? "Hide" : "Show").on_click((_e, cx) => { f.show = !f.show; view.inputs.key.set_masked(!f.show); cx.notify(); })
     .child(icon(f.show ? "eye-off" : "eye", 14, c.dim));
-  const how = mcp
-    ? ["In n8n, open Settings → Instance-level MCP → Connect a client, choose the API key tab and copy the token (not the server URL). Flowdeck uses the token; OAuth sign-in isn't supported yet.", "MCP shows workflows and their graphs. Run history and failures need an API key."]
-    : ["In n8n, open Settings → n8n API and create an API key.", "Self-hosted? The public API must be enabled (it is unless N8N_PUBLIC_API_DISABLED is set)."];
+  const how = ["In n8n, open Settings → n8n API and create an API key.", "Self-hosted? The public API must be enabled (it is unless N8N_PUBLIC_API_DISABLED is set)."];
 
   const form = v_flex().id("card").w_full().p(22).gap(16).rounded(16).bg(alpha(c.surface, 0.92)).border(1).border_color(c.border).shadow_lg()
     .map(rise(en, 120, 14))
-    .child(segmented(c, f.mode, (id, cx) => { f.mode = id; f.error = null; cx.notify(); }))
     .child(field(c, { id: "url", labelText: "Instance address", input: view.inputs.url }))
     .when(Boolean(f.needsOptIn), (e) => e.child(toggle(c, {
       id: "insecure", on: Boolean(f.allowInsecure),
@@ -82,7 +65,7 @@ export function connectView(view, c) {
       sub: "Anyone on the same network could read your key. Only for a network you trust; https is better.",
       onToggle: (cx) => { f.allowInsecure = !f.allowInsecure; f.error = null; cx.notify(); },
     })))
-    .child(field(c, { id: "key", labelText: mcp ? "MCP access token" : "API key", input: view.inputs.key, trailing: eye, hint: mcp ? "Bearer token" : "X-N8N-API-KEY" }))
+    .child(field(c, { id: "key", labelText: "API key", input: view.inputs.key, trailing: eye, hint: "X-N8N-API-KEY" }))
     .child(field(c, { id: "name", labelText: "Name", input: view.inputs.name }))
     .child(toggle(c, {
       id: "remember", on: f.remember && canRemember, disabled: !canRemember,

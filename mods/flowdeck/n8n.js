@@ -1,6 +1,5 @@
-// Talking to n8n: its public REST API with an API key, or its instance MCP server with an access token. Read-only by
-// design: nothing here creates, changes, runs or deletes anything in n8n, and the MCP client refuses every tool but
-// the two that read workflows.
+// Talking to n8n: its public REST API, with an API key. Read-only by design: nothing here creates, changes, runs or
+// deletes anything in n8n.
 //
 // The key is only ever put in a header to the instance's own address. Herdr's fetch refuses a cross-origin redirect
 // that would replay it, and every answer's final URL is checked against the instance too.
@@ -103,92 +102,6 @@ export class RestSource {
   }
 }
 
-// ── MCP ───────────────────────────────────────────────────────────────────────────────────────────────────────
-
-const MCP_READ_TOOLS = new Set(["search_workflows", "get_workflow_details"]);
-
-// n8n's instance MCP server (Settings → Instance-level MCP), over streamable HTTP. It lists and describes workflows;
-// it has no executions, so failures need an API key.
-export class McpSource {
-  constructor(base, token) {
-    this.base = base;
-    this.url = `${base}/mcp-server/http`;
-    this.headers = { Authorization: `Bearer ${token}` };
-    this.kind = "mcp";
-    this.has = { executions: false, details: false };
-    this.seq = 0;
-    this.ready = false;
-  }
-
-  async rpc(method, params, notification = false) {
-    const body = JSON.stringify({ jsonrpc: "2.0", method, ...(params ? { params } : {}), ...(notification ? {} : { id: ++this.seq }) });
-    let res;
-    try {
-      res = await fetch(this.url, { method: "POST", headers: { ...this.headers, "Content-Type": "application/json", Accept: "application/json, text/event-stream" }, body });
-    } catch (e) {
-      throw new N8nError(/redirect/i.test(String(e)) ? "The address redirects somewhere else. Use the final address of your instance." : `Couldn't reach ${new URL(this.base).host}.`, "network");
-    }
-    if (res.url && !sameOrigin(this.base, res.url)) throw new N8nError("The answer came from a different address than your instance. Refusing it.", "redirect");
-    const text = await res.text();
-    if (res.status === 401 || res.status === 403) throw new N8nError("n8n refused the MCP token. Copy a fresh one from Settings → Instance-level MCP.", "auth", res.status);
-    if (res.status === 404) throw new N8nError("No MCP server at this address. Turn on Instance-level MCP in n8n's settings.", "notfound", 404);
-    if (!res.ok && res.status !== 202) throw explain(res.status, text);
-    if (notification) return null;
-    if (text.length > MAX_BODY) throw new N8nError("n8n sent more than Flowdeck will read in one answer.", "server");
-    // Streamable HTTP answers either with JSON or with a short event stream: take the message with our id.
-    const messages = text.trim().startsWith("{") ? [text] : text.split(/\r?\n/).filter((l) => l.startsWith("data:")).map((l) => l.slice(5).trim());
-    for (const m of messages) {
-      let j;
-      try { j = JSON.parse(m); } catch { continue; }
-      if (j.id !== this.seq) continue;
-      if (j.error) throw new N8nError(`MCP error: ${String(j.error.message ?? "").slice(0, 200)}`, "server");
-      return j.result;
-    }
-    throw new N8nError("The MCP server's answer was empty.", "server");
-  }
-
-  async init() {
-    if (this.ready) return;
-    await this.rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "flowdeck-herdr", version: "0.1.0" } });
-    await this.rpc("notifications/initialized", null, true);
-    this.ready = true;
-  }
-
-  async call(name, args) {
-    if (!MCP_READ_TOOLS.has(name)) throw new Error(`Flowdeck never calls ${name}`);
-    await this.init();
-    const r = await this.rpc("tools/call", { name, arguments: args });
-    const text = r?.content?.find((c) => c.type === "text")?.text;
-    if (r?.isError) throw new N8nError(String(text ?? "The MCP tool failed").slice(0, 300), "server");
-    if (r?.structuredContent) return r.structuredContent;
-    try { return JSON.parse(text ?? "null"); } catch { return text; }
-  }
-
-  async check() {
-    await this.init();
-  }
-
-  async workflows() {
-    const r = await this.call("search_workflows", { limit: 200 });
-    const found = Array.isArray(r) ? r : r?.data ?? r?.workflows ?? r?.items ?? [];
-    const list = Array.isArray(found) ? found.filter((w) => w && typeof w === "object") : [];
-    // Details fill in nodes and connections; until then a workflow has what search gave.
-    const out = [];
-    for (const w of list.slice(0, 200)) out.push({ ...w, id: String(w.id), nodes: w.nodes ?? [], connections: w.connections ?? {}, partial: true });
-    return out;
-  }
-
-  async workflow(id) {
-    const r = await this.call("get_workflow_details", { workflowId: String(id) });
-    const w = r?.workflow ?? r;
-    return { ...w, id: String(w?.id ?? id), partial: false };
-  }
-
-  async executions() { return []; }
-  async recent() { return []; }
-  async execution() { throw new N8nError("Execution details need an API key.", "unsupported"); }
-}
-
 // ── Demo ──────────────────────────────────────────────────────────────────────────────────────────────────────
 
 export class DemoSource {
@@ -207,7 +120,7 @@ export class DemoSource {
 
 export function sourceFor(profile, secret) {
   if (profile.mode === "demo") return new DemoSource();
-  return profile.mode === "mcp" ? new McpSource(profile.base, secret) : new RestSource(profile.base, secret);
+  return new RestSource(profile.base, secret);
 }
 
 // Links into the n8n editor, always under the instance's own address.

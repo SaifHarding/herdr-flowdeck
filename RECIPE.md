@@ -1,6 +1,6 @@
 # Flowdeck for n8n
 
-A pane that connects to an n8n instance (with an API key, or an MCP token) and shows how it's doing. There's an overview of the last day, every workflow drawn as a live graph with any run laid over it, a week of failures grouped by cause, and a box for asking Claude about any of it. A toast fires the moment a run fails. A demo mode with a made-up instance lets people try it before connecting anything.
+A pane that connects to an n8n instance with an API key and shows how it's doing. There's an overview of the last day, every workflow drawn as a live graph with any run laid over it, a week of failures grouped by cause, and a box for asking Claude about any of it. A toast fires the moment a run fails. A demo mode with a made-up instance lets people try it before connecting anything.
 
 ![Flowdeck for n8n](preview.png)
 
@@ -16,7 +16,6 @@ The mod fills its pane (a tab: `tab.new {name: "n8n", mod: "flowdeck"}`). Every 
 
 - A 52 px coral Flowdeck tile joined by three pulsing dots to a 52 px tile holding n8n's mark in n8n pink (`#ff91ac`, or `#e8436f` in light themes; the mark is `icons/n8n.svg` from n8n's design system), then the title "Connect your n8n" at 24 px semibold, and a one-line pitch.
 - A 16 px-rounded card holding:
-  - A segmented control: API key | MCP token.
   - Three 38 px fields: instance address, the key (masked, with an eye toggle) and an optional name.
   - A switch: "Remember in macOS Keychain" (or "your system keyring"; disabled when neither exists).
   - Error and warning lines.
@@ -30,7 +29,7 @@ The mod fills its pane (a tab: `tab.new {name: "n8n", mod: "flowdeck"}`). Every 
 
 **Header** (52 px, `chrome`), left to right:
 
-- A 30 px coral logo tile, "Flowdeck", and the instance name. A pulsing green dot shows it's live (amber on error), followed by a small n8n mark. An API, MCP or DEMO tag follows, and a chevron opens the instance menu.
+- A 30 px coral logo tile, "Flowdeck", and the instance name. A pulsing green dot shows it's live (amber on error), followed by a small n8n mark. An API or DEMO tag follows, and a chevron opens the instance menu.
 - Centred pill tabs: Overview, Workflows, Failures (with a red count of new failure groups) and Ask Claude.
 - On the right: "Synced 12s ago", a refresh button (it spins while syncing), and a gear button that opens the menu.
 - Below 980 px wide, the tabs show icons only.
@@ -105,7 +104,7 @@ The mod fills its pane (a tab: `tab.new {name: "n8n", mod: "flowdeck"}`). Every 
 
 - `mod.json`: `{ "place": "none", "title": "Flowdeck", "overlay": { "kind": "dialog", "width": 0.94, "height": 0.92 } }`. In a dialog, a header button pops it out to a tab.
 - `main.js` holds the view, profiles, sync, alerts, navigation, the header and the menu. The other files:
-  - `n8n.js`: the REST client, MCP client (streamable HTTP, JSON or SSE answers) and demo source.
+  - `n8n.js`: the REST client and the demo source.
   - `vault.js`: the keychain.
   - `claude.js`: the Claude Code runner.
   - `model.js`: pure logic covering node kinds, URL and key rules, redaction, stats, grouping, hints, graph layout and the Claude context.
@@ -117,7 +116,7 @@ The mod fills its pane (a tab: `tab.new {name: "n8n", mod: "flowdeck"}`). Every 
   - `sprite/`: Flo, in two facings.
 - From `herdr`: `exec`, `readTextFile`, `shared`/`setShared`, `notify`, `panes` (to find its own tab for the toast), `props`, `closeOverlay`, `run` (`tab.new`, `tab.select`), `nextCommand` and `appHome`. From gpui: `PathBuilder` + `window.paint_path` for edges, arrows, the dot grid and the ring; `Input`/`InputState` and `Textarea`/`TextareaState`; and `TextView.markdown`.
 - Programs: `security` (macOS) or `secret-tool` (Linux); `claude`; `open`, `xdg-open` or `rundll32`; `mkdir`, `chmod`, `rm`, `find`, `pkill`.
-- n8n endpoints: `GET /api/v1/workflows`, `GET /api/v1/executions`, `GET /api/v1/executions/:id?includeData=true`, and `POST /mcp-server/http` (`initialize`, `tools/call` for `search_workflows` and `get_workflow_details`).
+- n8n endpoints: `GET /api/v1/workflows`, `GET /api/v1/executions`, `GET /api/v1/executions/:id?includeData=true`.
 
 ## Watch out
 
@@ -132,7 +131,7 @@ The mod fills its pane (a tab: `tab.new {name: "n8n", mod: "flowdeck"}`). Every 
 - Herdr docks a copy of any new mod folder into the shown layout the first time it sees it, unless `mod.json` already says `"place": "none"`. Write `mod.json` first.
 - Herdr's `fetch` has no timeout option (it gives up after about 30 s), no response headers and no redirect option. It refuses cross-origin redirects that would replay caller headers, which is what keeps the key safe.
 - `exec` has no stdin and a 30 s limit, so secrets and prompts go through a private file. Claude runs in the background, and its stream is read from a file.
-- n8n's MCP server has no executions: Failures shows a "needs an API key" screen in MCP mode.
+- There's no MCP mode: n8n's MCP server has no run history, so it can't drive failures, alerts or replays, and n8n points MCP clients to an OAuth sign-in a mod can't complete. A profile saved in MCP mode by an earlier build asks to be reconnected with an API key.
 - Hard limits: 1,000 workflows, 3,000 executions, 300 failure details, 400 rows in the list and 6 MiB per answer.
 - Platform names from `os.platform()` are `macos`, `linux` and `windows`.
 

@@ -86,7 +86,7 @@ function attention(view, c, m, en) {
       .child(div().text_size(13).font_semibold().child("Needs attention"))
       .when(m.groups.length > 5, (e) => e.child(button(c, { id: "all-fails", label: `All ${m.groups.length}`, size: "sm", kind: "subtle", onClick: (_e, cx) => view.go("failures", cx) }))))
     .when(!groups.length, (e) => e.child(h_flex().py(18).gap(10).items_center().justify_center()
-      .child(icon("check", 16, c.ok)).child(div().text_size(12.5).text_color(c.muted).child(view.source?.has.executions ? "No failures in the last 7 days. Nice." : "Failures need an API key: MCP doesn't share run history."))))
+      .child(icon("check", 16, c.ok)).child(div().text_size(12.5).text_color(c.muted).child("No failures in the last 7 days. Nice."))))
     .children(groups.map((g, i) => {
       const h = hint(g);
       return h_flex().id(`att-${i}`).px(10).py(9).mx(-10).gap(11).items_center().rounded(9).cursor_pointer().hover((s) => s.bg(c.hover))
@@ -108,7 +108,7 @@ function feed(view, c, m, en) {
     .child(h_flex().justify_between().items_center().pb(4)
       .child(h_flex().gap(8).items_center().child(div().text_size(13).font_semibold().child("Live runs")).child(dot(c.ok, 7, true)))
       .child(div().text_size(11.5).text_color(c.dim).child(m.kpis.running ? `${m.kpis.running} running now` : "")))
-    .when(!list.length, (e) => e.child(div().py(18).text_size(12.5).text_color(c.dim).text_center().child(view.source?.has.executions ? "No runs in the last 7 days." : "Run history needs an API key.")))
+    .when(!list.length, (e) => e.child(div().py(18).text_size(12.5).text_color(c.dim).text_center().child("No runs in the last 7 days.")))
     .children(list.map((e) => {
       const w = m.byId.get(e.workflowId);
       const st = e.status ?? (e.finished ? "success" : "error");
@@ -130,17 +130,16 @@ export function overviewView(view, c) {
   const narrow = (view.size?.width ?? 1200) < 980;
   const runsD = delta(k.runs, k.runsPrev, false), failD = delta(k.failures, k.failuresPrev, true);
   const failingNow = [...m.stats.values()].filter((s) => s.health === "failing").length;
-  const noRuns = !view.source?.has.executions;
   const row = (kids) => (narrow ? v_flex() : h_flex().items_start()).gap(14).w_full().children(kids);
   return v_flex().id("overview").size_full().overflow_y_scrollbar().px(20).py(18).gap(14)
     .child(h_flex().justify_between().items_end().map(rise(en, 0, 6))
       .child(v_flex().gap(4)
         .child(div().text_size(20).font_semibold().child(greeting(m.now)))
-        .child(div().text_size(13).text_color(c.muted).child(`${k.active} of ${plural(k.workflows, "workflow")} active${failingNow ? ` · ${failingNow} failing on the last run` : " · all healthy on their last run"}${noRuns ? " · connected over MCP, run history needs an API key" : ""}`))))
+        .child(div().text_size(13).text_color(c.muted).child(`${k.active} of ${plural(k.workflows, "workflow")} active${failingNow ? ` · ${failingNow} failing on the last run` : " · all healthy on their last run"}`))))
     .child(h_flex().gap(12).w_full().flex_wrap()
-      .child(kpi(c, { id: "k-runs", title: "Runs · 24h", value: noRuns ? "–" : k.runs, sub: noRuns ? "needs an API key" : runsD.text, iconName: "pulse", accent: c.run, entered: en, delay: 40 }))
+      .child(kpi(c, { id: "k-runs", title: "Runs · 24h", value: k.runs, sub: runsD.text, iconName: "pulse", accent: c.run, entered: en, delay: 40 }))
       .child(kpi(c, { id: "k-rate", title: "Success rate", value: k.success === null ? "–" : `${(k.success * 100).toFixed(k.success > 0.995 ? 1 : 1)}%`, sub: k.success === null ? "no finished runs" : `${(k.runs - k.failures - k.running)} of ${(k.runs - k.running)} finished ok`, iconName: "check", accent: c.ok, entered: en, delay: 80, extra: ring(c, k.success) }))
-      .child(kpi(c, { id: "k-fail", title: "Failures · 24h", value: noRuns ? "–" : String(k.failures), sub: noRuns ? "needs an API key" : failD.text, subColor: failD.good === false ? c.err : failD.good ? c.ok : null, iconName: "alert", accent: c.err, entered: en, delay: 120 }))
+      .child(kpi(c, { id: "k-fail", title: "Failures · 24h", value: String(k.failures), sub: failD.text, subColor: failD.good === false ? c.err : failD.good ? c.ok : null, iconName: "alert", accent: c.err, entered: en, delay: 120 }))
       .child(kpi(c, { id: "k-dur", title: "Median run", value: duration(k.median), sub: k.running ? `${k.running} running now` : "across all workflows", iconName: "clock", accent: c.brand2, entered: en, delay: 160 }))
       .child(kpi(c, { id: "k-wf", title: "Active workflows", value: `${k.active}/${k.workflows}`, sub: `${plural(d.workflows.filter((w) => !w.active).length, "inactive", "inactive")}`, iconName: "flow", accent: c.brand, entered: en, delay: 200 })))
     .child(row([chartCard(view, c, m, en), narrow ? busiest(view, c, m, en).w_full() : busiest(view, c, m, en)]))
