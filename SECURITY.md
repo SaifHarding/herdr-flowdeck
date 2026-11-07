@@ -41,6 +41,12 @@ Flowdeck handles a credential that can read everything in an n8n instance. This 
 - **n8n's data is drawn as text.** Names, errors and parameters are native text, never HTML or markdown.
 - **Claude's answers are drawn as markdown, made safe first.** Images, raw HTML tags and link reference definitions are removed before an answer is rendered, outside code blocks. That's because an image would load without a click, which would make it a silent way to send data out. Links in an answer open only if they point at your instance's workflow or execution pages, or at docs.n8n.io. Webhook and form URLs, which a click would run, don't open.
 
+## Chat history
+
+- **Where.** One file per instance, `~/.config/herdr-app/.flowdeck/history-<profile>.json`, mode 600 in the mode-700 private folder. It's never in Herdr's shared state, which every mod can read.
+- **What.** The last 50 conversations: each question, each answer as shown, the model, and which run (by id) was shared. The run data sent to Claude is never kept, though an answer may quote it.
+- **Forgetting.** × deletes one conversation and Clear all deletes the file. Disconnecting an instance deletes its history with its key.
+
 ## Asking Claude
 
 - **Consent per instance and per scope.** The first question about one workflow or failure on an instance asks first. The first question about "all workflows" on that instance asks again. "See exactly what's sent" shows the full context, word for word, before you say yes.

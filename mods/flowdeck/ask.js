@@ -6,7 +6,7 @@ import { div, PathBuilder, Background } from "gpui-kit";
 import { h_flex, v_flex, Textarea, TextView } from "gpui-base";
 import { shared, setShared } from "herdr";
 import { alpha, icon, button, chip, spinner, rise, mono, card, dot } from "./ui.js";
-import { runsMentioned, buildContext, buildPrompt, SYSTEM_PROMPT, lastMentioned, mentionsInOrder, suspectsIn, safeMarkdown, answerLinkAllowed, findNeedle, mentionScore, runEvidence, running, when, splitSummary } from "./model.js";
+import { ago, runsMentioned, buildContext, buildPrompt, SYSTEM_PROMPT, lastMentioned, mentionsInOrder, suspectsIn, safeMarkdown, answerLinkAllowed, findNeedle, mentionScore, runEvidence, running, when, splitSummary } from "./model.js";
 import { MODELS, startAsk, readAsk, cancelAsk, cleanupAsk } from "./claude.js";
 import { graphView, GraphState } from "./graph.js";
 import { randomBytes } from "crypto";
@@ -35,6 +35,14 @@ export class AskSession {
     this.job = null;
     this.task = null;
     this.seq = 0;
+    this.newConversation();
+  }
+
+  // A fresh conversation: its own id, so history keeps each one apart.
+  newConversation() {
+    this.turns = [];
+    this.convId = `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    this.convCreated = Date.now();
   }
 
   get model() { return MODELS.some((m) => m.id === shared(MODEL)) ? shared(MODEL) : "sonnet"; }
@@ -42,7 +50,7 @@ export class AskSession {
 
   reset() {
     this.cancel();
-    this.turns = [];
+    this.newConversation();
     this.scope = { kind: "all", label: "All workflows" };
     this.pending = null;
   }
@@ -211,6 +219,7 @@ export class AskSession {
             this.task = null;
             this.job = null;
             if (late && !r.done) await cancelAsk(job); else await cleanupAsk(job);
+            this.onAnswered?.();
           }
           if (news) cx.notify();
         });
@@ -219,6 +228,7 @@ export class AskSession {
       a.streaming = false;
       a.error = String(e?.message ?? e);
       this.job = null;
+      this.onAnswered?.();
       cx.notify();
     }
   }
@@ -338,6 +348,50 @@ function replyBox(c, t) {
       .child(div().id(`reply-input-${t.id}`).flex_1().min_w(0).py(2).cursor_text().on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .child(Textarea.new(replyHandler.input).w_full().text_size(13).text_color(c.foreground)))
       .child(button(c, { id: `reply-send-${t.id}`, iconName: "send", kind: "primary", size: "sm", tooltip: "Reply (Enter)", onClick: (_e, cx) => replyHandler.send(cx) })));
+}
+
+// Chat history: past conversations on this instance, newest first, grouped by day. Click to reopen and carry on;
+// × deletes one; Clear all deletes the lot. Kept in Flowdeck's private folder (history.js).
+function dayOf(ms, now = Date.now()) {
+  const d = new Date(ms), t = new Date(now);
+  if (d.toDateString() === t.toDateString()) return "Today";
+  if (new Date(now - 86400e3).toDateString() === d.toDateString()) return "Yesterday";
+  return now - ms < 7 * 86400e3 ? "This week" : "Earlier";
+}
+
+export function historyPanel(view, c, { width = null, fill = false } = {}) {
+  const list = view.history ?? [];
+  const current = view.asking.convId;
+  const groups = [];
+  for (const conv of list) {
+    const g = dayOf(conv.updated);
+    if (groups.at(-1)?.name !== g) groups.push({ name: g, items: [] });
+    groups.at(-1).items.push(conv);
+  }
+  const base = v_flex().id("history").h_full().bg(c.chrome ?? c.surface);
+  return (fill ? base.w_full().flex_1().min_h(0) : base.w(width ?? 290).flex_none().border_r(1).border_color(c.border))
+    .child(h_flex().px(14).py(11).gap(8).items_center().border_b(1).border_color(c.border)
+      .child(icon("history", 14, c.muted)).child(div().flex_1().text_size(13).font_semibold().child("History"))
+      .when(list.length > 0, (e) => e.child(button(c, { id: "history-clear", label: "Clear all", size: "sm", kind: "subtle", onClick: (_e, cx) => view.clearConversations(cx) })))
+      .child(button(c, { id: "history-close", iconName: "close", kind: "subtle", size: "sm", tooltip: "Close", onClick: (_e, cx) => { view.historyOpen = false; cx.notify(); } })))
+    .child(v_flex().id("history-list").flex_1().min_h(0).overflow_y_scrollbar().p(8).gap(2)
+      .when(!list.length, (e) => e.child(div().p(14).text_size(12).text_color(c.dim).child("Conversations you have here are kept on this machine, and show up here.")))
+      .children(groups.flatMap((g) => [
+        div().px(8).pt(10).pb(4).text_size(10.5).font_semibold().text_color(c.dim).child(g.name.toUpperCase()),
+        ...g.items.map((conv) => {
+          const on = conv.id === current;
+          return h_flex().id(`conv-${conv.id}`).px(10).py(8).gap(8).items_start().rounded(8).cursor_pointer()
+            .bg(on ? alpha(c.brand, 0.12) : "#00000000").hover((st) => st.bg(on ? alpha(c.brand, 0.16) : c.hover))
+            .on_click((_e, cx) => view.openConversation(conv, cx))
+            .child(v_flex().flex_1().min_w(0).gap(2)
+              .child(div().truncate().text_size(12.5).font_medium().text_color(c.foreground).child(conv.title || "Conversation"))
+              .child(div().truncate().text_size(11).text_color(c.dim).child(`${conv.scope?.label ?? "All workflows"} · ${conv.turns.length} ${conv.turns.length === 1 ? "answer" : "answers"} · ${ago(conv.updated)}`)))
+            .child(h_flex().id(`conv-del-${conv.id}`).size(22).flex_none().rounded(6).items_center().justify_center().cursor_pointer()
+              .hover((st) => st.bg(c.hover)).tooltip("Delete").on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+              .on_click((_e, cx) => { view.deleteConversation(conv.id, cx); })
+              .child(icon("close", 11, c.dim)));
+        }),
+      ])));
 }
 
 // Look further, under an answer that used a run (or searched for one): the run before, the run after, or the same
@@ -465,11 +519,14 @@ export function askView(view, c) {
   // The question box stays put above the conversation, so a follow-up is always one click away however far down
   // the last answer has been read.
   return h_flex().id("ask").size_full().items_start()
+    .when(Boolean(view.historyOpen), (e) => e.child(historyPanel(view, c, { width: 290 })))
     .child(v_flex().id("ask-col").flex_1().min_w(0).h_full()
     .child(h_flex().flex_none().w_full().justify_center().px(20).pt(16).pb(10).border_b(1).border_color(turns.length ? c.border : "#00000000")
-      .child(div().w_full().max_w(maxW).child(composer.map(rise(en, 0, 8))).when(turns.length > 0 && !busy, (e) => e.child(h_flex().pt(6).gap(8).items_center()
-        .child(icon("chat", 11, c.dim)).child(div().flex_1().text_size(11).text_color(c.dim).child("Ask a follow-up: Claude remembers this conversation."))
-        .child(button(c, { id: "ask-clear", label: "New conversation", size: "sm", kind: "subtle", onClick: (_e, cx) => { s.turns = []; cx.notify(); } }))))))
+      .child(div().w_full().max_w(maxW).child(composer.map(rise(en, 0, 8))).child(h_flex().pt(6).gap(8).items_center()
+        .child(icon("chat", 11, c.dim)).child(div().flex_1().text_size(11).text_color(c.dim).child(turns.length ? "Ask a follow-up: Claude remembers this conversation." : ""))
+        .child(button(c, { id: "ask-history", label: `History${(view.history ?? []).length ? ` · ${view.history.length}` : ""}`, iconName: "history", size: "sm", kind: view.historyOpen ? "solid" : "subtle",
+          onClick: (_e, cx) => { view.historyOpen = !view.historyOpen; cx.notify(); } }))
+        .when(turns.length > 0 && !busy, (e) => e.child(button(c, { id: "ask-clear", label: "New conversation", size: "sm", kind: "subtle", onClick: (_e, cx) => { s.newConversation(); cx.notify(); } }))))))
     .child(v_flex().id("ask-scroll").flex_1().min_h(0).w_full().overflow_y_scrollbar().items_center()
     .child(v_flex().w_full().max_w(maxW).px(20).pt(14).pb(20).gap(14)
       .when(Boolean(s.pending), (e) => e.child(consentCard(view, c)))
@@ -575,14 +632,19 @@ export function askDock(view, c, w) {
       .when(f.steps > 1 && !f.culprit, (e) => e.child(div().flex_none().text_size(11).font_family(mono()).text_color(c.dim).child(`${f.step}/${f.steps}`)))
       .when(Boolean(f.culprit), (e) => e.child(icon("chevron", 12, c.err)))
     : null;
-  return v_flex().id("dock").w(400).flex_none().h_full().border_l(1).border_color(c.border).bg(c.surface)
-    .child(h_flex().px(14).py(10).gap(9).items_center().border_b(1).border_color(c.border)
+  const head = h_flex().px(14).py(10).gap(9).items_center().border_b(1).border_color(c.border)
       .child(h_flex().size(26).rounded(7).items_center().justify_center().bg(alpha(c.brand, 0.16)).child(busy ? spinner(13, c.brand) : icon("spark", 13, c.brand)))
       .child(v_flex().flex_1().min_w(0)
         .child(div().text_size(13).font_semibold().child("Ask Claude"))
         .child(div().truncate().text_size(11).text_color(c.dim).child(mine ? s.scope.label : w.name)))
       .child(modelPicker(view, c))
-      .child(button(c, { id: "dock-close", iconName: "close", kind: "subtle", size: "sm", tooltip: "Close", onClick: (_e, cx) => { view.dockOpen = false; cx.notify(); } })))
+      .child(button(c, { id: "dock-history", iconName: "history", kind: view.historyOpen ? "solid" : "subtle", size: "sm", tooltip: "History", onClick: (_e, cx) => { view.historyOpen = !view.historyOpen; cx.notify(); } }))
+      .child(button(c, { id: "dock-close", iconName: "close", kind: "subtle", size: "sm", tooltip: "Close", onClick: (_e, cx) => { view.dockOpen = false; cx.notify(); } }));
+  // History replaces the conversation while it's open.
+  if (view.historyOpen) return v_flex().id("dock").w(400).flex_none().h_full().border_l(1).border_color(c.border).bg(c.surface)
+    .child(head).child(historyPanel(view, c, { fill: true }));
+  return v_flex().id("dock").w(400).flex_none().h_full().border_l(1).border_color(c.border).bg(c.surface)
+    .child(head)
     .child(v_flex().p(12).gap(8)
       .child(h_flex().gap(8).items_end().p(10).rounded(11).bg(c.background).border(1).border_color(busy ? alpha(c.brand, 0.5) : c.border)
         .child(div().id("dock-input").flex_1().min_w(0).py(2).cursor_text().on_mouse_down("left", (_e, cx) => cx.stop_propagation())

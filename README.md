@@ -15,6 +15,7 @@ Your n8n instance in a [Herdr](https://herdr.dev) pane. Connect it with an API k
 
   "Motion" follows the system's reduce-motion setting. Set it to Reduce and sprites jump straight to the node and hold still.
 - **Flo, and what every sprite follows**: whatever sprite you pick stands wherever the attention is. On a replay Flo hops node to node as the run plays, standing on the failing node with a red "!" (or a green ✓ when it finished). While Claude answers, Flo walks the graph in the order Claude names the nodes, and a scanning beam sweeps each one. When the answer is in, Flo goes to the node it blames, raises a red "!", and pins a pulsing **Likely cause** flag to it.
+- **Chat history**: past Ask Claude conversations per instance, kept in Flowdeck's private folder on your machine. Reopen one to carry on, or delete it.
 - **Alerts**: a Herdr toast the moment a run fails, with the failing node and the error. Clicking it brings you to Flowdeck.
 
 There's a demo mode with a made-up instance, so you can try it before connecting anything.

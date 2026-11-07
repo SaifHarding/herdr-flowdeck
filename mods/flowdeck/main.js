@@ -22,6 +22,7 @@ import { workflowsView, sortedWorkflows } from "./workflows.js";
 import { failuresView } from "./failures.js";
 import { askView, AskSession } from "./ask.js";
 import { claudeInstalled } from "./claude.js";
+import { loadHistory, saveHistory, clearHistory, snapshot, restoreTurns, MAX_CONVERSATIONS } from "./history.js";
 import { SPRITES, SPRITE_KEY, spriteKind, motionPrefs } from "./sprites.js";
 import { TICK } from "./motion.js";
 
@@ -100,6 +101,8 @@ export default class Flowdeck extends View {
     this.dockOpen = false;
     this.listCollapsed = Boolean(shared(LIST_COLLAPSED));
     this.asking = new AskSession();
+    this.asking.onAnswered = () => this.saveConversation();
+    this.history = [];
     this.data = this.emptyData();
     this.vault = null;
     this.platform = os.platform();
@@ -264,6 +267,8 @@ export default class Flowdeck extends View {
 
   async open(profile, cx, source = null) {
     this.profile = profile;
+    this.history = [];
+    this.history = await loadHistory(profile.id).catch(() => []);
     this.data = this.emptyData();
     this.sel = { ...this.sel, workflowId: null, node: null, runId: null, failureKey: null };
     this.asking.reset();
@@ -310,6 +315,7 @@ export default class Flowdeck extends View {
     await this.asking.cancel();
     if (p.mode !== "demo") {
       await deleteSecret(p.id, p.base);
+      await clearHistory(p.id);
       setShared(PROFILES, this.profiles().filter((x) => x.id !== p.id));
       for (const k of [ALERTED, SEEN]) {
         const v = { ...(shared(k) ?? {}) };
@@ -632,6 +638,40 @@ export default class Flowdeck extends View {
     if (!q || this.asking.busy) return;
     this.inputs.reply.set_value("");
     this.ask(q, cx);
+  }
+
+  // ── History ──
+
+  saveConversation() {
+    const p = this.profile, conv = snapshot(this.asking);
+    if (!p || !conv) return;
+    this.history = [conv, ...this.history.filter((c) => c.id !== conv.id)].slice(0, MAX_CONVERSATIONS);
+    saveHistory(p.id, this.history).catch(() => {});
+  }
+
+  openConversation(conv, cx) {
+    if (this.asking.busy) return;
+    this.asking.turns = restoreTurns(conv);
+    this.asking.convId = conv.id;
+    this.asking.convCreated = conv.created;
+    this.asking.scope = conv.scope ?? { kind: "all", label: "All workflows" };
+    this.historyOpen = false;
+    cx.timer.after(80, () => { try { this.inputs.reply.focus(); } catch {} });
+    cx.notify();
+  }
+
+  deleteConversation(id, cx) {
+    this.history = this.history.filter((c) => c.id !== id);
+    if (this.asking.convId === id && !this.asking.busy) this.asking.newConversation();
+    if (this.profile) saveHistory(this.profile.id, this.history).catch(() => {});
+    cx.notify();
+  }
+
+  clearConversations(cx) {
+    this.history = [];
+    if (!this.asking.busy) this.asking.newConversation();
+    if (this.profile) clearHistory(this.profile.id).catch(() => {});
+    cx.notify();
   }
 
   askCurrent(cx) {
