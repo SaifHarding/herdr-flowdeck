@@ -113,6 +113,22 @@ function inspector(view, c, w, run) {
         .child(div().p(10).rounded(8).bg(c.background).border(1).border_color(c.border).text_size(11.3).font_family(mono()).text_color(c.muted).child(shown === "{}" ? "No parameters set" : shown))));
 }
 
+// Where Flo stands: the node a replay is on, else the node a run failed at (or finished on), else the node you
+// clicked, else the trigger.
+function focusOf(view, graph, run) {
+  if (!graph?.nodes.length) return null;
+  const order = run?.order ?? [];
+  if (view.replay && order.length) {
+    const done = view.replay.step >= order.length;
+    const o = order[Math.min(view.replay.step, order.length - 1)];
+    return { node: o.name, mood: done ? (run.node ? "error" : "ok") : "think", label: done ? "Replay finished" : `Running ${o.name}` };
+  }
+  if (view.sel.node) return { node: view.sel.node, mood: "look" };
+  if (order.length) return run.node ? { node: run.node, mood: "error", label: `Failed at ${run.node}` } : { node: order[order.length - 1].name, mood: run.status === "running" ? "think" : "ok" };
+  const t = graph.nodes.find((n) => n.info.trigger) ?? graph.nodes[0];
+  return { node: t.name, mood: "look" };
+}
+
 export function workflowsView(view, c) {
   const m = view.derived();
   if (view.data.loading) return v_flex().size_full().items_center().justify_center().child(spinner(20, c.brand));
@@ -144,7 +160,7 @@ export function workflowsView(view, c) {
     const canvas = w.partial
       ? v_flex().flex_1().items_center().justify_center().gap(10).child(w.detailError ? icon("alert", 18, c.warn) : spinner(18, c.brand)).child(div().text_size(12).text_color(c.muted).child(w.detailError ?? "Loading the workflow…"))
       : div().id("canvas-wrap").relative().flex_1().min_w(0).h_full()
-        .child(graphView(c, { id: "graph", graph, state: view.graph, run, replay: view.replay, selected: view.sel.node, active: w.active,
+        .child(graphView(c, { id: "graph", graph, state: view.graph, run, replay: view.replay, selected: view.sel.node, active: w.active, focus: focusOf(view, graph, run),
           onSelect: (name, cx) => { view.sel.node = name; cx.notify(); }, onChange: notify }))
         .child(div().absolute().bottom(14).right(14).child(graphControls(c, { id: "gc", state: view.graph, graph, onChange: notify })))
         .child(h_flex().absolute().bottom(14).left(14).gap(12).px(10).py(6).rounded(8).bg(alpha(c.surface, 0.9)).border(1).border_color(c.border).text_size(11).text_color(c.muted)

@@ -10,6 +10,7 @@
     "ctrl-r": "flowdeck.refresh",
     "ctrl-j": "flowdeck.next",
     "ctrl-k": "flowdeck.prev",
-    "ctrl-shift-r": "flowdeck.replay"
+    "ctrl-shift-r": "flowdeck.replay",
+    "ctrl-shift-a": "flowdeck.ask-about"
   }
 }

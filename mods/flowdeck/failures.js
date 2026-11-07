@@ -76,7 +76,7 @@ function detail(view, c, m, g) {
       .child(h_flex().px(14).py(9).justify_between().items_center().border_b(1).border_color(c.border)
         .child(div().text_size(11).font_semibold().text_color(c.dim).child("WHERE IT BROKE · LATEST RUN"))
         .child(div().text_size(11).text_color(c.dim).child(run ? `${run.order.length} nodes ran before it stopped` : "")))
-      .child(div().relative().flex_1().min_h(0).child(graphView(c, { id: "fail-graph", graph, state: view.failGraph, run, replay: null, selected: g.node, active: false,
+      .child(div().relative().flex_1().min_h(0).child(graphView(c, { id: "fail-graph", graph, state: view.failGraph, run, replay: null, selected: g.node, active: false, focus: g.node ? { node: g.node, mood: "error", label: `Failed at ${g.node}` } : null,
         onSelect: (_n, cx) => cx.notify(), onChange: (cx) => cx.notify() })))))
     .child(card(c).p(15).gap(10).map(rise(en, 240, 6))
       .child(h_flex().justify_between().items_center()

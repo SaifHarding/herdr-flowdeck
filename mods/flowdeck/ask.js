@@ -5,14 +5,16 @@
 import { div } from "gpui-kit";
 import { h_flex, v_flex, Textarea, TextView } from "gpui-base";
 import { shared, setShared } from "herdr";
-import { alpha, icon, button, chip, spinner, rise, mono, card } from "./ui.js";
-import { buildContext, buildPrompt, SYSTEM_PROMPT } from "./model.js";
+import { alpha, icon, button, chip, spinner, rise, mono, card, dot } from "./ui.js";
+import { buildContext, buildPrompt, SYSTEM_PROMPT, lastMentioned, mentionsInOrder } from "./model.js";
 import { MODELS, startAsk, readAsk, cancelAsk, cleanupAsk } from "./claude.js";
+import { graphView, GraphState } from "./graph.js";
 
 const CONSENT = "flowdeck.ask-consent";
 const MODEL = "flowdeck.ask-model";
 const POLL = 160;
 const MAX_MS = 4 * 60e3;
+const WALK_MS = 700;
 
 const SUGGEST = {
   all: ["What's failing most this week, and why?", "Which workflows haven't run in the last 7 days?", "Which workflows send messages to Slack or email?", "Summarise what this instance automates, in five bullets."],
@@ -44,6 +46,8 @@ export class AskSession {
   async cancel() {
     this.task?.cancel();
     this.task = null;
+    this.walk?.cancel();
+    this.walk = null;
     const job = this.job;
     this.job = null;
     if (job) {
@@ -80,6 +84,12 @@ export class AskSession {
       const job = await startAsk({ prompt: buildPrompt(context, history, question), system: SYSTEM_PROMPT, model: this.model });
       a.job = job;
       this.job = job;
+      a.floStep = 0;
+      this.walk?.cancel();
+      this.walk = cx.timer.every(WALK_MS, (cx) => {
+        if (a.floStep < (a.tourLength ?? 0) - 1) { a.floStep++; cx.notify(); }
+        else if (!a.streaming) { this.walk?.cancel(); this.walk = null; }
+      });
       this.task = cx.timer.every(POLL, (cx) => {
         if (this.job !== job) return;
         cx.spawn(async (cx) => {
@@ -192,8 +202,13 @@ export function askView(view, c) {
         .child(div().truncate().text_size(11).text_color(c.dim).child("Sent to Claude through your Claude Code: workflow structure and errors. Never credentials or run data.")))
       .child(modelPicker(view, c)));
   const turns = s.turns;
-  return v_flex().id("ask").size_full().overflow_y_scrollbar().items_center()
-    .child(v_flex().w_full().max_w(860).px(20).py(20).gap(14)
+  const focus = claudeFocus(view);
+  const width = view.size?.width ?? 0;
+  const side = focus && width >= 960;
+  const panelW = width >= 1320 ? 440 : 360;
+  return h_flex().id("ask").size_full().items_start()
+    .child(v_flex().id("ask-scroll").flex_1().min_w(0).h_full().overflow_y_scrollbar().items_center()
+    .child(v_flex().w_full().max_w(side ? 780 : 860).px(20).py(20).gap(14)
       .child(composer.map(rise(en, 0, 8)))
       .when(Boolean(s.pending), (e) => e.child(consentCard(view, c)))
       .when(s.installed === false, (e) => e.child(h_flex().px(12).py(9).gap(9).items_center().rounded(9).bg(alpha(c.warn, 0.1)).border(1).border_color(alpha(c.warn, 0.4))
@@ -203,11 +218,58 @@ export function askView(view, c) {
           .child(h_flex().size(46).rounded(14).items_center().justify_center().bg(alpha(c.brand, 0.14)).child(icon("spark", 22, c.brand)))
           .child(div().text_size(16).font_semibold().child(s.scope.kind === "all" ? "Ask about your workflows" : `Ask about ${s.scope.label}`))
           .child(div().text_size(12.5).text_color(c.muted).child("Claude reads the structure and recent errors, then answers. Try one of these:")))
-        .child(h_flex().flex_wrap().gap(10).justify_center().children(sug.map((q, i) => h_flex().id(`sug-${i}`).w(380).px(14).py(11).gap(10).items_center().rounded(11)
+        .child(h_flex().flex_wrap().gap(10).justify_center().children(sug.map((q, i) => h_flex().id(`sug-${i}`).flex_1().min_w(280).px(14).py(11).gap(10).items_center().rounded(11)
           .bg(c.surface).border(1).border_color(c.border).cursor_pointer().hover((st) => st.border_color(alpha(c.brand, 0.6)).bg(c.hover))
           .map(rise(en, 160 + i * 60, 8))
           .on_click((_e, cx) => view.ask(q, cx))
-          .child(icon("spark", 13, c.brand)).child(div().flex_1().text_size(12.8).child(q)).child(icon("chevron", 12, c.dim)))))))
+          .child(icon("spark", 13, c.brand)).child(div().flex_1().min_w(0).text_size(12.8).child(q)).child(icon("chevron", 12, c.dim)))))))
       .children(turns.map((p, i) => v_flex().id(`pair-${p.q.id}`).gap(10).child(question(c, p.q)).child(answer(c, p.a, i))))
-      .when(turns.length > 0 && !busy, (e) => e.child(h_flex().justify_center().pt(4).child(button(c, { id: "ask-clear", label: "Clear conversation", size: "sm", kind: "subtle", onClick: (_e, cx) => { s.turns = []; cx.notify(); } })))));
+      .when(turns.length > 0 && !busy, (e) => e.child(h_flex().justify_center().pt(4).child(button(c, { id: "ask-clear", label: "Clear conversation", size: "sm", kind: "subtle", onClick: (_e, cx) => { s.turns = []; cx.notify(); } }))))))
+    .when(Boolean(side), (e) => e.child(focusPanel(view, c, focus, panelW)));
+}
+
+// What Claude is looking at, worked out from the answer as it streams: the workflow it last named (or the one asked
+// about), and the node of that workflow it last named. Flo stands there.
+export function claudeFocus(view) {
+  const s = view.asking, m = view.derived();
+  const a = s.turns[0]?.a;
+  const text = a?.text ?? "";
+  const scope = s.scope;
+  let wf = scope.kind !== "all" ? m.byId.get(scope.workflowId) : null;
+  if (!wf && text) {
+    const name = lastMentioned(text, view.data.workflows.map((w) => w.name));
+    wf = view.data.workflows.find((w) => w.name === name) ?? null;
+  }
+  if (!wf || wf.partial || !(wf.nodes ?? []).length) return null;
+  // Flo walks the nodes in the order Claude names them, one hop per tick of the session's walk timer, however fast
+  // the text itself arrives.
+  const tour = mentionsInOrder(text, wf.nodes.map((n) => n.name));
+  if (a) a.tourLength = tour.length;
+  let node = tour.length ? tour[Math.min(a?.floStep ?? 0, tour.length - 1)] : null;
+  const failing = scope.kind === "failure" ? view.data.runs.get(String(scope.runId))?.node : null;
+  const named = Boolean(node);
+  node = node ?? failing ?? (wf.nodes.find((n) => /trigger|webhook/i.test(n.type)) ?? wf.nodes[0]).name;
+  const walking = Boolean(a) && (a.floStep ?? 0) < tour.length - 1;
+  const busy = Boolean(a?.streaming) || walking;
+  const mood = busy ? "think" : a?.error ? "error" : !a && failing === node ? "error" : "look";
+  return { workflow: wf, node, mood, named, streaming: busy, step: tour.length ? Math.min(a?.floStep ?? 0, tour.length - 1) + 1 : 0, steps: tour.length, label: `Claude's focus: ${node}` };
+}
+
+function focusPanel(view, c, f, width) {
+  const key = f.workflow.id;
+  if (!view.askGraph || view.askGraph.key !== key) { view.askGraph = new GraphState(); view.askGraph.key = key; view.askGraph.entered = true; view.askGraph.pad = 24; }
+  const graph = view.graphOf(f.workflow);
+  return v_flex().id("focus-panel").w(width).flex_none().h_full().p(16).pl(0).gap(10)
+    .child(card(c).id("focus-card").flex_1().min_h(0).overflow_hidden().border_color(f.streaming ? alpha(c.brand, 0.55) : c.border)
+      .child(h_flex().px(14).py(10).gap(8).items_center().border_b(1).border_color(c.border)
+        .child(dot(f.streaming ? c.brand : c.dim, 7, f.streaming))
+        .child(div().text_size(11).font_semibold().text_color(c.dim).child("CLAUDE'S FOCUS"))
+        .child(div().flex_1())
+        .child(div().max_w(220).truncate().text_size(11.5).text_color(c.muted).child(f.workflow.name)))
+      .child(div().relative().flex_1().min_h(0).child(graphView(c, { id: "focus-graph", graph, state: view.askGraph, run: null, replay: null, selected: f.named ? f.node : null, active: false, focus: f, follow: true,
+        onSelect: (_n, cx) => cx.notify(), onChange: (cx) => cx.notify() }))))
+    .child(h_flex().px(4).gap(8).items_center()
+      .child(div().text_size(12).text_color(c.muted).child(f.streaming ? (f.named ? "Looking at" : "Reading the workflow…") : f.named ? "Last talked about" : "Ready to look at"))
+      .when(f.named || !f.streaming, (e) => e.child(div().flex_1().min_w(0).truncate().text_size(12).font_semibold().text_color(c.foreground).child(f.node)))
+      .when(f.steps > 1, (e) => e.child(div().flex_none().text_size(11).font_family(mono()).text_color(c.dim).child(`${f.step}/${f.steps}`))));
 }

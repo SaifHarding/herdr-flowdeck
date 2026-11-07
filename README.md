@@ -6,6 +6,7 @@ Your n8n instance in a [Herdr](https://herdr.dev) pane. Connect it with an API k
 - **Workflows**: every workflow drawn as a live graph, laid out the way you arranged it in n8n. Pick any run from the strip above the graph and its path lights up: green for nodes that ran, red and pulsing for the one that failed, faded for nodes the run never reached. Replay walks a run node by node. Click a node to inspect its settings, with secrets hidden.
 - **Failures**: a week of failures, grouped by workflow, node and error, so a run that failed 200 times is one line. Each group shows what n8n said, a first idea of why (expired credential, rate limit, timeout, bad data in a Code node, and so on), where it broke on the graph, and when it happened.
 - **Ask Claude**: ask about the whole instance, one workflow or one failure: "Why is this failing?", "Which workflows haven't run this week?", "What does this one do, step by step?". The answer streams in through your own Claude Code.
+- **Flo**: a little pixel-art bot who stands wherever the attention is. On a replay Flo hops node to node as the run plays, standing on the failing node with a red "!" (or a green ✓ when it finished). In Ask Claude, a "Claude's focus" panel follows the answer: Flo walks the workflow in the order Claude names its nodes, with the camera gliding along behind, and thinks out loud while Claude is still writing.
 - **Alerts**: a Herdr toast the moment a run fails, with the failing node and the error. Clicking it brings you to Flowdeck.
 
 There's a demo mode with a made-up instance, so you can try it before connecting anything.
@@ -35,7 +36,7 @@ For a quick look without a tab, `mod.open:flowdeck` opens it as a large dialog, 
 Merge [keys.json](keys.json) into `~/.config/herdr-app/keys.json`:
 
 - `ctrl-shift-n` opens Flowdeck in a new tab.
-- While Flowdeck has focus: `ctrl-1` to `ctrl-4` switch views, `ctrl-r` refreshes, `ctrl-j`/`ctrl-k` move to the next or previous workflow or failure, and `ctrl-shift-r` replays the selected run.
+- While Flowdeck has focus: `ctrl-1` to `ctrl-4` switch views, `ctrl-r` refreshes, `ctrl-j`/`ctrl-k` move to the next or previous workflow or failure, `ctrl-shift-r` replays the selected run, and `ctrl-shift-a` asks Claude about the selected workflow.
 
 ## Connecting
 

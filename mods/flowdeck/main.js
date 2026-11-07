@@ -108,6 +108,11 @@ export default class Flowdeck extends View {
     if (TABS.some((t) => t.id === cmd) && this.mode === "app") this.go(cmd, cx);
     else if (cmd === "refresh" && this.mode === "app") cx.spawn(async (cx) => this.refresh(cx, { full: true }));
     else if (cmd === "demo") cx.spawn(async (cx) => this.tryDemo(cx));
+    else if (cmd === "ask-about" && this.mode === "app") {
+      const w = this.derived().byId.get(this.sel.workflowId);
+      if (w) this.asking.scope = { kind: "workflow", workflowId: w.id, label: w.name };
+      this.go("ask", cx);
+    }
     else if (cmd === "replay" && this.tab === "workflows") { if (this.replay) this.stopReplay(); else this.startReplay(cx); }
     else if (cmd === "next" || cmd === "prev") {
       const list = this.tab === "failures" ? this.derived().groups.map((g) => g.key) : sortedWorkflows(this).map((w) => w.id);

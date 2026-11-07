@@ -120,3 +120,21 @@ test("workflow text can't close the data block and pose as the question", async 
   assert.equal(p.match(/<\/n8n_data>/g).length, 1, "only Flowdeck's own closing tag");
   assert.ok(p.trim().endsWith("Question: What does it do?"));
 });
+
+test("Claude's focus follows the node it named last", async () => {
+  const { lastMentioned } = await import("../mods/flowdeck/model.js");
+  const nodes = ["Form submitted", "Enrich company", "Merge", "Save to Airtable", "If"];
+  assert.equal(lastMentioned("It starts at **Form submitted**, then **Enrich company** fails", nodes), "Enrich company");
+  assert.equal(lastMentioned("**Enrich company** fails, so nothing reaches **Save to Airtable**", nodes), "Save to Airtable");
+  assert.equal(lastMentioned("If you look closely", nodes), null, "two-letter names don't match ordinary words");
+  assert.equal(lastMentioned("", nodes), null);
+});
+
+test("Flo's tour follows the order Claude names nodes in", async () => {
+  const { mentionsInOrder } = await import("../mods/flowdeck/model.js");
+  const nodes = ["Form submitted", "Enrich company", "Score lead", "Merge", "Get", "Get products"];
+  const text = "**Form submitted** fires, then **Enrich company** and **Score lead** run; **Merge** joins them. Back to **Enrich company**. **Get products** then.";
+  assert.deepEqual(mentionsInOrder(text, nodes), ["Form submitted", "Enrich company", "Score lead", "Merge", "Enrich company", "Get products"]);
+  assert.deepEqual(mentionsInOrder("Merge Merge Merge", nodes), ["Merge"], "repeats in a row collapse");
+  assert.deepEqual(mentionsInOrder("", nodes), []);
+});

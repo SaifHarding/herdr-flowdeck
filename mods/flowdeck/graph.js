@@ -4,9 +4,9 @@
 //
 // Paths are built in screen units for the current zoom and cached; panning only moves the layer they sit in.
 
-import { div, PathBuilder } from "gpui-kit";
+import { div, image, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { edgeCurve, travelled } from "./model.js";
+import { edgeCurve, travelled, CARD } from "./model.js";
 import { alpha, icon, spinner, MOTION, mono } from "./ui.js";
 
 const GLIDE = { response: 420, damping: 0.92 };
@@ -37,6 +37,17 @@ export class GraphState {
     this.zoom = Math.round(z * 100) / 100;
     this.x = (W - graph.width * this.zoom) / 2;
     this.y = Math.max(pad / 6, (H - graph.height * this.zoom) / 2 - pad / 8);
+    this.glide = animate;
+  }
+
+  // Centres one node at a readable zoom: the camera that follows Flo in a narrow panel.
+  follow(graph, name, animate = true) {
+    const n = graph?.nodes.find((x) => x.name === name);
+    if (!this.size || !n) return;
+    const { width: W, height: H } = this.size;
+    this.zoom = Math.max(0.55, Math.min(0.9, (W - 40) / (CARD.w * 2.2)));
+    this.x = W / 2 - (n.x + n.w / 2) * this.zoom;
+    this.y = H / 2 - (n.y + n.h / 2) * this.zoom + 18;
     this.glide = animate;
   }
 
@@ -172,9 +183,48 @@ function nodeCard(c, n, z, st, { selected, onSelect, entered, index, runInfo }) 
   return el;
 }
 
+// Flo, the focus sprite: stands on top of the node that has the attention (the one a replay is running, the one that
+// failed, the one Claude is talking about) and hops to the next with a bouncy spring. It turns to face where it's
+// going, bobs while it waits, and says how things are going in a bubble: thinking dots, a red "!", a green tick.
+const HOP = { response: 620, damping: 0.6 };
+const MOODS = { think: { text: null }, error: { text: "!" }, ok: { text: "✓" }, look: { text: null } };
+
+function sprite(c, state, graph, z, focus) {
+  const n = graph.nodes.find((x) => x.name === focus?.node);
+  if (!n) return null;
+  const S = Math.round(Math.max(30, Math.min(52, 46 * (0.5 + z * 0.55))));
+  // Standing on the middle of the card's top edge, clear of the status badge on its corner.
+  const x = n.x * z + (n.w * z) / 2 - S / 2, y = n.y * z - S + 4;
+  if (state.flo && Math.abs(state.flo.x - x) > 2) state.flo.facing = x < state.flo.x ? "l" : "r";
+  state.flo = { x, facing: state.flo?.facing ?? "r" };
+  const mood = MOODS[focus.mood] ? focus.mood : "look";
+  const tone = mood === "error" ? c.err : mood === "ok" ? c.ok : c.brand;
+  const bubble = mood === "think"
+    ? h_flex().absolute().left(S * 0.55).top(-15).h(16).px(6).rounded(8).items_center().bg(c.popover ?? c.surface).border(1).border_color(alpha(c.brand, 0.6))
+      .child(div().w(16).text_size(10).font_bold().text_color(c.brand).frames(["•  ", "•• ", "•••", " ••", "  •", "   "], 160).child(""))
+    : MOODS[mood].text
+      ? h_flex().absolute().left(S * 0.62).top(-14).size(17).rounded(9).items_center().justify_center().bg(tone)
+        .when(mood === "error", (e) => e.loop("opacity", { from: 0.55, to: 1, period: 800 }))
+        .child(div().text_size(11).font_bold().text_color("#ffffff").child(MOODS[mood].text))
+      : null;
+  return div().id("flo").absolute().left(x).spring("left", HOP).top(y).spring("top", HOP).w(S).h(S)
+    .tooltip(focus.label ?? `Focus: ${n.name}`)
+    // A shadow on the card's edge, breathing with the bob.
+    .child(div().absolute().left(S * 0.18).top(S - 3).w(S * 0.64).h(5).rounded(3).bg(alpha("#000000", c.dark ? 0.55 : 0.25))
+      .loop("opacity", { from: 0.45, to: 1, period: mood === "think" ? 520 : 1100 }))
+    .child(div().absolute().left(0).top(0).size(S).loop("top", { from: 0, to: mood === "think" ? -4 : -2.5, period: mood === "think" ? 520 : 1100 })
+      .child(image(`mods/flowdeck/sprite/flo-${state.flo.facing}.svg`).size(S)))
+    // The antenna's glow.
+    .child(div().absolute().left(S * 0.34).top(-S * 0.06).size(S * 0.32).rounded(S).bg(alpha("#ffd36e", 0.35)).loop("opacity", { from: 0.2, to: 0.9, period: 1400 }))
+    .when(Boolean(bubble), (e) => e.child(bubble));
+}
+
 // The graph view. `run` (from extractRun) lays a run over the picture; `replay` ({ step }) shows it part-way.
-export function graphView(c, { id, graph, state, run, replay, selected, onSelect, onChange, active }) {
-  if (state.size && graph?.nodes.length && state.fitted !== graph.key) { state.fit(graph, false); state.fitted = graph.key; }
+export function graphView(c, { id, graph, state, run, replay, selected, onSelect, onChange, active, focus, follow = false }) {
+  if (follow && state.size && graph?.nodes.length && focus?.node) {
+    const key = `${graph.key}|${focus.node}`;
+    if (state.followed !== key && !state.touched) { state.follow(graph, focus.node, Boolean(state.followed)); state.followed = key; state.fitted = graph.key; }
+  } else if (state.size && graph?.nodes.length && state.fitted !== graph.key) { state.fit(graph, false); state.fitted = graph.key; }
   const z = state.zoom;
   const p = graph?.nodes.length ? paths(state, graph, z, run, replay, c) : null;
   const states = nodeStates(run, replay);
@@ -202,13 +252,15 @@ export function graphView(c, { id, graph, state, run, replay, selected, onSelect
       const o = ran.get(n.name);
       const info = o ? `${o.status}${o.ms != null ? ` in ${o.ms} ms` : ""}${o.runs > 1 ? ` · ${o.runs} runs` : ""}` : null;
       return nodeCard(c, n, z, states.get(n.name) ?? null, { selected: selected === n.name, onSelect, entered: state.entered, index: i, runInfo: info });
-    }));
+    }))
+    .when(Boolean(focus && graph?.nodes.length), (e) => { const f = sprite(c, state, graph, z, focus); return f ? e.child(f) : e; });
 
   return div().id(id).relative().size_full().overflow_hidden().bg(c.canvas ?? c.background)
     .on_size_change((size, cx) => {
       state.size = size;
       // Until the person pans or zooms, the graph keeps fitting its space as the pane settles and resizes.
-      if (!state.touched || state.fitted !== graph?.key) { state.fit(graph, false); state.fitted = graph?.key; }
+      if (follow && focus?.node && !state.touched) { state.follow(graph, focus.node, false); state.followed = `${graph?.key}|${focus.node}`; state.fitted = graph?.key; }
+      else if (!state.touched || state.fitted !== graph?.key) { state.fit(graph, false); state.fitted = graph?.key; }
       onChange(cx);
     })
     .on_mouse_down("left", (e, cx) => { state.dragging = { x: e.position.x, y: e.position.y }; state.moved = false; state.glide = false; cx.notify(); })

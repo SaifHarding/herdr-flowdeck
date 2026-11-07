@@ -462,6 +462,38 @@ export function buildPrompt(context, history, question) {
   return `<n8n_data>\n${context}\n</n8n_data>\n\n${turns ? `<conversation_so_far>\n${turns}\n</conversation_so_far>\n\n` : ""}Question: ${question}`;
 }
 
+// Which of `names` the text mentions last (the one being talked about now), or null. Names under 3 characters are
+// skipped: they'd match inside ordinary words.
+export function lastMentioned(text, names) {
+  let best = null, at = -1;
+  for (const n of names) {
+    if (!n || n.length < 3) continue;
+    const i = String(text ?? "").lastIndexOf(n);
+    // A later mention wins; at the same spot the longer name does ("Get products" over "Get").
+    if (i > at || (i === at && i >= 0 && n.length > best.length)) { at = i; best = n; }
+  }
+  return best;
+}
+
+// Every mention of `names` in the text, in the order they appear, with repeats in a row collapsed: the tour Flo walks
+// as Claude talks through a workflow. At one spot the longest name wins ("Get products" over "Get").
+export function mentionsInOrder(text, names) {
+  const t = String(text ?? ""), hits = [];
+  for (const n of names) {
+    if (!n || n.length < 3) continue;
+    for (let i = t.indexOf(n); i >= 0; i = t.indexOf(n, i + n.length)) hits.push([i, n]);
+  }
+  hits.sort((a, b) => a[0] - b[0] || b[1].length - a[1].length);
+  const out = [];
+  let end = -1;
+  for (const [i, n] of hits) {
+    if (i < end) continue;
+    end = i + n.length;
+    if (out[out.length - 1] !== n) out.push(n);
+  }
+  return out;
+}
+
 // ── Words ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
 export function ago(ms, now = Date.now()) {

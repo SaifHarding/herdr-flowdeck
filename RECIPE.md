@@ -57,10 +57,13 @@ The mod fills its pane (a tab: `tab.new {name: "n8n", mod: "flowdeck"}`). Every 
 - The detail pane has the title "workflow › node" (node in red), "Explain with Claude", "Show in graph" and Open run.
 - Below that come a tinted hint card, the "What n8n said" card (message at 14 px, description in a monospace well, HTTP code tag), a 330 px card with the graph of the latest failing run, and "When it happened": 28 six-hour bars plus the 8 latest runs.
 
-**Ask Claude**, a centred 860 px column:
+**Flo**, the focus sprite (`sprite/flo-r.svg`, `flo-l.svg`): a 16×16 pixel-art bot, drawn with `image()` at 30–52 px depending on zoom. Its body is coral `#ff7a5c` with shade `#d94f37`, outline `#2b1d33`, a cream screen face `#fff4ea` with 2×2 eyes and pink cheeks `#ff8fa3`, and a yellow antenna `#ffd36e` with a soft breathing glow. It stands on the middle of a node card's top edge with a shadow on the edge under it. While it's idle it bobs 2.5 px every 1.1 s; while thinking it bobs 4 px every 0.52 s. Its bubbles: thinking dots in a coral-bordered pill, a red "!" pill (pulsing) on a failure, or a green ✓.
+
+**Ask Claude**, a centred 860 px column (780 px with the focus panel):
 
 - A question card: scope chips (All workflows, the selected workflow, or the failure), an auto-growing textarea with a send button (stop while answering), a privacy note, and a model picker (Haiku, Sonnet, Opus).
 - Before the first question, a consent card says exactly what is sent and what never is.
+- When the question is about one workflow or failure (or Claude names a workflow), a "Claude's focus" panel sits on the right: 440 px wide, or 360 px below 1,320 px of pane width, and hidden below 960 px. It has a header with a live dot and the workflow name, that workflow's graph with Flo on it, and a caption: "Looking at **node**" with a step counter such as `4/11`.
 - Answers are cards, newest first, each under its question bubble. While waiting they show "Reading your workflows" with animated dots, then markdown that types itself out with a ▍ cursor. Each answer ends with its time and cost.
 
 ## How it behaves
@@ -69,11 +72,15 @@ The mod fills its pane (a tab: `tab.new {name: "n8n", mod: "flowdeck"}`). Every 
 - **Alerts.** A newly failed run fires a Herdr toast, `level: "error"`, with the workflow, node and error. Clicking it runs `tab.select` on Flowdeck's tab. Every copy shares a high-water mark of execution ids in `shared("flowdeck.alerted")`, so each failure alerts once. The first load never alerts on history.
 - **Run overlay.** Picking a run lays it over the graph. Nodes that ran get a green ring and a ✓ badge. The failing node gets a red ring, a ✕ badge and a breathing red halo. Nodes the run didn't reach fade to 40%. Travelled edges glow green with a slow pulse, and the edge into the failing node pulses red. With no run selected, an active workflow's edges shimmer coral.
 - **Replay** steps through the run's node order every 520 ms. The next node shows a spinner badge, and a "Replaying · n of N" chip sits top left.
+- **Flo** moves with a bouncy spring (response 620 ms, damping 0.6) and turns to face where it's going.
+  - In Workflows: on the replay's current node (thinking); with a run selected, on the failing node ("!") or the last node (✓); on a clicked node; else on the trigger.
+  - In Failures: on the failing node.
+  - In Ask: Flo walks the nodes in the order Claude's answer names them (`mentionsInOrder`, repeats in a row collapsed), one hop every 700 ms, so the tour plays out even when the text arrives in one burst. The panel's camera centres Flo's node at a readable zoom (55–90%) and glides after it until the person pans.
 - **Graph.** Drag to pan. Scroll pans; ⌘/Ctrl-scroll zooms around the pointer (25–200%). The buttons zoom by 1.2×, and fit springs to fit. Until you pan or zoom, the graph refits whenever the pane resizes. Clicking a node opens the inspector, and clicking the background closes it.
 - **Hints** read the error: 401/403, expired or "credentials" → auth; 429 or "rate limit" → rate; timeouts and connection resets → network; "cannot read properties", TypeError → code; 5xx → server; "not found" → missing.
 - **Ask.** It runs `claude -p` in the background with no tools, streaming `stream-json` that is read every 160 ms. Stop kills only that process. The answer is cut off after 4 minutes.
 - **Entrances.** Every view rises 8 px and fades in, staggered 40–60 ms. Bars and meters grow from zero. All motion is native (`.transition`, `.spring`, `.loop`, `.spin`, `.frames`); timers only fetch data, and replay steps once per node.
-- **Keys** (`flowdeck.<command>`): `overview`, `workflows`, `failures`, `ask`, `refresh`, `demo`, `next`, `prev`, `replay`.
+- **Keys** (`flowdeck.<command>`): `overview`, `workflows`, `failures`, `ask`, `ask-about`, `refresh`, `demo`, `next`, `prev`, `replay`.
 
 ## Built from
 
@@ -88,6 +95,7 @@ The mod fills its pane (a tab: `tab.new {name: "n8n", mod: "flowdeck"}`). Every 
   - One file per view: `connect.js`, `overview.js`, `workflows.js`, `failures.js`, `ask.js`.
   - `demo.js`: the made-up instance.
   - `icons/`: 16 px stroke SVGs, tinted.
+  - `sprite/`: Flo, in two facings.
 - From `herdr`: `exec`, `readTextFile`, `shared`/`setShared`, `notify`, `panes` (to find its own tab for the toast), `props`, `closeOverlay`, `run` (`tab.new`, `tab.select`), `nextCommand` and `appHome`. From gpui: `PathBuilder` + `window.paint_path` for edges, arrows, the dot grid and the ring; `Input`/`InputState` and `Textarea`/`TextareaState`; and `TextView.markdown`.
 - Programs: `security` (macOS) or `secret-tool` (Linux); `claude`; `open`, `xdg-open` or `rundll32`; `mkdir`, `chmod`, `rm`, `find`, `pkill`.
 - n8n endpoints: `GET /api/v1/workflows`, `GET /api/v1/executions`, `GET /api/v1/executions/:id?includeData=true`, and `POST /mcp-server/http` (`initialize`, `tools/call` for `search_workflows` and `get_workflow_details`).
@@ -108,9 +116,10 @@ The mod fills its pane (a tab: `tab.new {name: "n8n", mod: "flowdeck"}`). Every 
 
 ## Done when
 
-- `herdr-app check mods/flowdeck` passes and `node --test tests/` passes (10 tests).
+- `herdr-app check mods/flowdeck` passes and `node --test tests/` passes (12 tests).
 - "Try with demo data" shows the Overview with numbers, bars that grow in, and a live feed.
 - On Workflows, "Stripe → HubSpot deal sync" shows its latest failed run: Stripe Trigger, Big deal? and Create deal ringed green, Notify #sales red and pulsing, Update contact faded. Replay walks it node by node.
+- Asking "Walk me through what this workflow does, node by node" about Lead enrichment makes Flo walk Form submitted → Enrich company → … in the order the answer names them, with the counter counting up.
 - "Support ticket triage (AI)" draws OpenAI model and Ticket memory as pills with dashed lines into the agent's bottom edge.
 - Failures shows the "Lead enrichment › Enrich company" group with the auth hint. Explain with Claude streams an answer that mentions the expired key and never shows `sk_live_4f9a8b7c6d5e4f3a2b1c` (the planted secret).
 - Against `tools/mock-n8n.mjs`, a wrong key gives "n8n refused the key", and `/redirect-test` gives the redirect refusal with no LEAK line in the port 5680 log.
