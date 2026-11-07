@@ -134,5 +134,7 @@ export function connectView(view, c) {
             .child(icon("github", 14, c.foreground))
             .child(div().text_size(12).child("Built by"))
             .child(div().text_size(12).font_semibold().text_color(c.foreground).child("SaifHarding"))
-            .child(icon("external", 11, c.dim))))));
+            .child(icon("external", 11, c.dim))))
+        .child(div().max_w(420).mx_auto().text_center().text_size(11).text_color(c.dim).map(rise(en, 360, 6))
+          .child("Flowdeck is an independent project, not an official n8n product, and isn't affiliated with or endorsed by n8n GmbH. n8n and its logo are trademarks of n8n GmbH."))));
 }

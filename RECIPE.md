@@ -24,6 +24,7 @@ The mod fills its pane (a tab: `tab.new {name: "n8n", mod: "flowdeck"}`). Every 
   - Two lines on where to find the key.
 - Under the card, three trust points with icons: Keys stay local, Read-only, You choose.
 - Below them, a centred 30 px pill with a border: the GitHub mark, "Built by **SaifHarding**" and an external-link arrow. Clicking it opens https://github.com/SaifHarding in the browser.
+- Last, a centred 11 px `dim` disclaimer, at most 420 px wide: "Flowdeck is an independent project, not an official n8n product, and isn't affiliated with or endorsed by n8n GmbH. n8n and its logo are trademarks of n8n GmbH."
 
 **Header button** (optional; a block with `props: { bar: true }`, 48 px, in a bar row): a 26 px hover button on `chrome` with a bottom border, holding the Flowdeck glyph at 16 px (`muted`, or `foreground` when there's news). When there are new failure causes, a red count pill (`99+` cap) breathes beside it. Its tooltip is "Open Flowdeck · <instance>" or "Flowdeck: N new failure causes on <instance>". Clicking it runs `tab.select` on the tab holding the Flowdeck pane (found with `panes()`), or `tab.new {name: "n8n", mod: "flowdeck"}` when there's none. It syncs nothing: the full copy writes `shared("flowdeck.badge") = { unseen, name }`, and only when that changes.
 
