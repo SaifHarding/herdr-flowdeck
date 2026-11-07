@@ -194,7 +194,8 @@ export function workflowsView(view, c) {
           onClick: (_e, cx) => (view.dockOpen ? view.closeDock(cx) : view.openDock(w, cx)) }))
         .when(view.profile?.mode !== "demo", (e) => e.child(button(c, { id: "wf-open", label: "Open in n8n", iconName: "external", size: "sm", onClick: () => view.openLink(links.workflow(base, w.id)) }))));
     const canvas = div().id("canvas-wrap").relative().flex_1().min_w(0).h_full()
-        .child(graphView(c, { id: "graph", graph, state: view.graph, run, replay: view.replay, selected: view.sel.node, active: w.active, focus: (view.dockOpen && !view.replay && claudeFocus(view, w.id)) || focusOf(view, graph, run),
+        .child(graphView(c, { id: "graph", graph, state: view.graph, run, replay: view.replay, selected: view.sel.node, active: w.active,
+          center: view.replay && run?.order?.length ? run.order[Math.min(view.replay.step, run.order.length - 1)]?.name : view.sel.centerNode ?? run?.node ?? run?.order?.[0]?.name ?? graph?.nodes.find((n) => n.info.trigger)?.name ?? null, focus: (view.dockOpen && !view.replay && claudeFocus(view, w.id)) || focusOf(view, graph, run),
           onSelect: (name, cx) => { view.sel.node = name; cx.notify(); }, onChange: notify }))
         .child(div().absolute().bottom(14).right(14).child(graphControls(c, { id: "gc", state: view.graph, graph, onChange: notify })))
         .child(h_flex().absolute().bottom(14).left(14).gap(12).px(10).py(6).rounded(8).bg(alpha(c.surface, 0.9)).border(1).border_color(c.border).text_size(11).text_color(c.muted)

@@ -12,7 +12,7 @@ import { focusSprite, spriteKind } from "./sprites.js";
 
 const GLIDE = { response: 420, damping: 0.92 };
 const SNAP = { response: 300, damping: 1, epsilon: 100000 };
-const MIN_Z = 0.25, MAX_Z = 2;
+const MIN_Z = 0.25, MAX_Z = 2, READABLE = 0.6;
 
 export class GraphState {
   constructor() {
@@ -39,6 +39,16 @@ export class GraphState {
     this.x = (W - graph.width * this.zoom) / 2;
     this.y = Math.max(pad / 6, (H - graph.height * this.zoom) / 2 - pad / 8);
     this.glide = animate;
+  }
+
+  // Fits the graph when it stays readable; a big one instead centres the node that matters (where a run failed, the
+  // node a replay is on) at a readable zoom, rather than shrinking 59 cards to specks.
+  fitOrCenter(graph, center, animate = false) {
+    if (!this.size || !graph?.nodes.length) return;
+    const { width: W, height: H } = this.size, pad = this.pad ?? 96;
+    const fitZ = Math.min((W - pad / 2) / graph.width, (H - pad) / graph.height);
+    if (center && fitZ < READABLE && graph.nodes.some((n) => n.name === center)) this.follow(graph, center, animate);
+    else this.fit(graph, animate);
   }
 
   // Centres one node at a readable zoom: the camera that follows Flo in a narrow panel.
@@ -253,12 +263,18 @@ function alertMark(c, n, z, labelText) {
 }
 
 // The graph view. `run` (from extractRun) lays a run over the picture; `replay` ({ step }) shows it part-way.
-export function graphView(c, { id, graph, state, run, replay, selected, onSelect, onChange, active, focus, follow = false }) {
+export function graphView(c, { id, graph, state, run, replay, selected, onSelect, onChange, active, focus, follow = false, center = null }) {
+  const fitKey = `${graph?.key}|${center ?? ""}`;
   const kind = spriteKind();
   if (follow && state.size && graph?.nodes.length && focus?.node) {
     const key = `${graph.key}|${focus.node}`;
     if (state.followed !== key && !state.touched) { state.follow(graph, focus.node, Boolean(state.followed)); state.followed = key; state.fitted = graph.key; }
-  } else if (state.size && graph?.nodes.length && state.fitted !== graph.key) { state.fit(graph, false); state.fitted = graph.key; }
+  } else if (state.size && graph?.nodes.length && state.fitted !== fitKey && (!state.touched || state.fitted?.split("|")[0] !== String(graph.key))) {
+    // A new centre on the same graph glides there; a new graph lands at once.
+    const same = state.fitted?.split("|")[0] === String(graph.key);
+    state.fitOrCenter(graph, center, same);
+    state.fitted = fitKey;
+  }
   const z = state.zoom;
   const p = graph?.nodes.length ? paths(state, graph, z, run, replay, c) : null;
   const states = nodeStates(run, replay);
@@ -302,7 +318,7 @@ export function graphView(c, { id, graph, state, run, replay, selected, onSelect
       state.size = size;
       // Until the person pans or zooms, the graph keeps fitting its space as the pane settles and resizes.
       if (follow && focus?.node && !state.touched) { state.follow(graph, focus.node, false); state.followed = `${graph?.key}|${focus.node}`; state.fitted = graph?.key; }
-      else if (!state.touched || state.fitted !== graph?.key) { state.fit(graph, false); state.fitted = graph?.key; }
+      else if (!state.touched || state.fitted?.split("|")[0] !== String(graph?.key)) { state.fitOrCenter(graph, center, false); state.fitted = fitKey; }
       onChange(cx);
     })
     .on_mouse_down("left", (e, cx) => { state.dragging = { x: e.position.x, y: e.position.y }; state.moved = false; state.glide = false; cx.notify(); })

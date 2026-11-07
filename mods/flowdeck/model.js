@@ -470,11 +470,16 @@ export function groupFailures(executions, runs, workflowsById, now = Date.now())
 // What to say first about a failure, from the error itself: a nudge, not a diagnosis.
 export function hint(group) {
   const m = `${group.message ?? ""} ${group.description ?? ""}`.toLowerCase();
-  const code = Number(group.httpCode) || Number((m.match(/\b(4\d\d|5\d\d)\b/) ?? [])[1]) || null;
+  // A status code only when n8n reports one, or the text calls it one ("401 - …", "status 503", "HTTP 429"): a bare
+  // "expected 525 bytes" is not a server error.
+  const named = [group.message, group.description].map((t) => String(t ?? "").match(/^\s*(4\d\d|5\d\d)\s*[-:]/)).find(Boolean) ?? m.match(/(?:status(?: code)?|http(?: error)?|returned|responded with|response code)\s*[:=]?\s*(4\d\d|5\d\d)\b/);
+  const code = Number(group.httpCode) || Number(named?.[1]) || null;
+  const line = m.match(/\[line (\d+)\]/);
   if (code === 401 || code === 403 || /unauthori[sz]ed|authorization failed|invalid[_ ]api[_ ]key|expired|forbidden|credentials/.test(m)) return { tone: "auth", text: "Looks like a credential problem: the key or token this node uses was refused or has expired." };
   if (code === 429 || /rate limit|too many requests/.test(m)) return { tone: "rate", text: "Rate limited. Retry on Fail with a wait, or batch the requests, usually fixes this." };
   if (/timed? ?out|etimedout|econnreset|econnrefused|socket hang up|enotfound/.test(m)) return { tone: "network", text: "The service didn't answer in time. Retry on Fail, or a longer timeout, helps with flaky APIs." };
   if (/cannot read propert|undefined|is not a function|unexpected token|referenceerror|typeerror/.test(m)) return { tone: "code", text: "A Code node or expression met data it didn't expect: some item is missing a field." };
+  if (line) return { tone: "code", text: `Thrown by the node's own code, at line ${line[1]}: it's the workflow's own check failing, so the fix is in that code or in the data it was given.` };
   if (code && code >= 500) return { tone: "server", text: "The other service had an error of its own. Usually temporary." };
   if (/not found|channel_not_found|404/.test(m)) return { tone: "missing", text: "Something this node points at doesn't exist any more, or it can't see it." };
   return null;

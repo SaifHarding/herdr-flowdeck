@@ -332,3 +332,12 @@ test("workflow pages are read without pinned or static data", async () => {
   assert.deepEqual(lean.data[0].nodes, JSON.parse(JSON.stringify(w.nodes)));
   assert.deepEqual(lean.data[0].connections, w.connections);
 });
+
+test("hints don't mistake byte counts for status codes, and name a Code node's own throw", () => {
+  const h = hint({ message: "Body reconstruction mismatch — expected 525 bytes, got 515. The sender may have changed its serialisation format. [line 21]" });
+  assert.equal(h.tone, "code");
+  assert.match(h.text, /line 21/);
+  assert.equal(hint({ message: "Service unavailable", description: "503 - upstream down" }).tone, "server");
+  assert.equal(hint({ message: "Request failed with status code 502" }).tone, "server");
+  assert.equal(hint({ message: "Processed 500 items" }), null);
+});

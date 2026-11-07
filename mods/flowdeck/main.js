@@ -510,6 +510,7 @@ export default class Flowdeck extends View {
     this.stopReplay();
     this.sel.workflowId = id;
     this.sel.node = node;
+    this.sel.centerNode = node;
     this.sel.runId = runId;
     cx.spawn(async (cx) => {
       const s = this.derived().stats.get(id);
