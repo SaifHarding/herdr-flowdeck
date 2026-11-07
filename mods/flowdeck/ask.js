@@ -261,8 +261,8 @@ function consentCard(view, c) {
       .text_size(11).font_family(mono()).text_color(c.muted).child(String(view.asking.preview).slice(0, 20000))));
 }
 
-// The answer's one-line summary, on a card with colour flowing slowly behind it: four gradient panels in a strip
-// twice the card's width, swinging side to side natively (no timer), under a scrim that keeps the words readable.
+// The answer's one-line summary, on a card with a still gradient behind it, under a scrim that keeps the words
+// readable.
 const FLOW_W = 520, FLOW_H = 220;
 let flowPaths = null;
 function flowStrip(c) {
@@ -273,7 +273,7 @@ function flowStrip(c) {
       return [rect, Background.linear_gradient(90, Background.stop(from, 0), Background.stop(cols[i + 1], 100))];
     });
   }
-  return div().absolute().top(0).left(0).w(FLOW_W * 4).h(FLOW_H).loop("left", { from: 0, to: -FLOW_W * 2, period: 16000, easing: "ease-in-out" })
+  return div().absolute().top(0).left(0).w(FLOW_W * 4).h(FLOW_H)
     .children(flowPaths.map(([rect, bg]) => window.paint_path(rect, bg).absolute().top(0).left(0).w(FLOW_W * 4).h(FLOW_H)));
 }
 
