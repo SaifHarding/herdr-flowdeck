@@ -66,6 +66,15 @@ The mod fills its pane (a tab: `tab.new {name: "n8n", mod: "flowdeck"}`). Every 
 - The detail pane has the title "workflow › node" (node in red), "Explain with Claude", "Show in graph" and Open run.
 - Below that come a tinted hint card, the "What n8n said" card (message at 14 px, description in a monospace well, HTTP code tag), a 330 px card with the graph of the latest failing run, and "When it happened": 28 six-hour bars plus the 8 latest runs.
 
+**Focus sprites** (`sprites.js` for drawing, `motion.js` for geometry and timing), chosen in the instance menu's FOCUS SPRITE chips (`shared("flowdeck.sprite")`: `probe` by default, `goose`, `brackets`, `flo` or `off`) and drawn in the graph's layer, so they follow pan and zoom.
+- **Pixels:** 3 screen px per sprite pixel, or 2 below 75% zoom, so the size on screen stays the same as you zoom. Each pose is cached as native paths, one per colour.
+- **Probe:** a 12×12 drone hovering 26 px above the card's centre. It bobs ±1 sprite pixel every 1.63 s. A faint green fan reaches from it down to the card; a 2 px green line and a 24 px glow sweep across the card every 4.08 s, and the eye moves with them. It blinks for 120 ms every 3.2 s, and its flames flicker. To move (1.4 s) it flies along the wire lifted 20 px, looking ahead, with long flames and a 5-pixel orange trail.
+- **Goose:** 17×14, standing at 55% across the card's top edge and pecking twice a second with sparks. On every third stop it honks between 0.9 and 1.7 s: a HONK! bubble, a flap, and the card jitters ±1.5 px. To move (1.9 s) it walks to the card's edge, waddles along the wire flapping, and climbs onto the next card.
+- **Brackets:** four orange 8 px corners, 5 px out, breathing ±1.5 px and between 55% and 95% opacity every 2.64 s. To move (1.1 s) they close to a 6 px dot over the first quarter, run along the wire with a 6-pixel trail, then open around the next node.
+- **How they move:** it's driven by events. When the focused node changes, the sprite travels the real A→B edge (sampled from `edgeCurve`, reversed for B→A, a straight line between facing sides when the nodes aren't connected). It then dwells until the next change.
+- **What ticks:** a move steps every 90 ms and glides natively between steps; nothing ticks while a sprite dwells. Crisp frame changes (walk cycle, flicker, blink, peck) are pairs of layers taking turns on an opacity loop swung far past 0 and 1, which Herdr clamps.
+- **Motion setting** (Auto, Reduce, Full; Auto reads macOS `reduceMotion` or GNOME `enable-animations`): Reduce skips the travel and holds the dwell pose still.
+
 **Flo**, the focus sprite (`sprite/flo-r.svg`, `flo-l.svg`): a 16×16 pixel-art bot, drawn with `image()` at 30–52 px depending on zoom. Its body is coral `#ff7a5c` with shade `#d94f37`, outline `#2b1d33`, a cream screen face `#fff4ea` with 2×2 eyes and pink cheeks `#ff8fa3`, and a yellow antenna `#ffd36e` with a soft breathing glow. It stands on the middle of a node card's top edge with a shadow on the edge under it. While it's idle it bobs 2.5 px every 1.1 s; while thinking it bobs 4 px every 0.52 s. Its bubbles: thinking dots in a coral-bordered pill, a red "!" pill (pulsing) on a failure, or a green ✓.
 
 **Ask Claude**, a centred 860 px column (780 px with the focus panel):
@@ -90,7 +99,7 @@ The mod fills its pane (a tab: `tab.new {name: "n8n", mod: "flowdeck"}`). Every 
 - **Hints** read the error: 401/403, expired or "credentials" → auth; 429 or "rate limit" → rate; timeouts and connection resets → network; "cannot read properties", TypeError → code; 5xx → server; "not found" → missing.
 - **Ask.** It runs `claude -p` in the background with no tools, streaming `stream-json` that is read every 160 ms. Stop kills only that process. The answer is cut off after 4 minutes.
 - **Entrances.** Every view rises 8 px and fades in, staggered 40–60 ms. Bars and meters grow from zero. All motion is native (`.transition`, `.spring`, `.loop`, `.spin`, `.frames`); timers only fetch data, and replay steps once per node.
-- **Keys** (`flowdeck.<command>`): `overview`, `workflows`, `failures`, `ask`, `ask-about` (docks Claude on Workflows), `toggle-list`, `connect` (the sign-in screen, to add an instance), `refresh`, `demo`, `next`, `prev`, `replay`.
+- **Keys** (`flowdeck.<command>`): `overview`, `workflows`, `failures`, `ask`, `ask-about` (docks Claude on Workflows), `toggle-list`, `connect` (the sign-in screen, to add an instance), `sprite-probe`/`sprite-goose`/`sprite-brackets`/`sprite-flo`/`sprite-off`, `next-sprite`, `refresh`, `demo`, `next`, `prev`, `replay`.
 
 ## Built from
 
@@ -116,6 +125,7 @@ The mod fills its pane (a tab: `tab.new {name: "n8n", mod: "flowdeck"}`). Every 
 - `"transparent"` isn't a colour; use `#00000000`.
 - `h_flex()` centres its children vertically. Rows of cards with different heights need `.items_start()`, and a canvas beside an inspector needs `.items_stretch()` and `.h_full()`, or it collapses to its content height.
 - A graph fitted on the first `on_size_change` fits a pane that hasn't settled yet. Keep refitting until the person moves it.
+- There's no canvas and no requestAnimationFrame. Sprites are native paths and loops, and only moves tick. A loop starts when its element is first drawn, so layers that must stay in step (the scan line and the probe's eye, the walk-cycle pair) have to be created in the same render.
 - Answers are markdown from a model that read untrusted text: strip images and raw HTML before `TextView.markdown`, or an injected image URL leaks data without a click.
 - Keep regexes that run on server text bounded, and cut the input first. An unbounded JWT-style pattern backtracks for minutes on crafted input.
 - `node --check file.js` doesn't parse ES modules: copy a file to `.mjs` to syntax-check it. Herdr's parse errors can point at the wrong line.
@@ -128,7 +138,8 @@ The mod fills its pane (a tab: `tab.new {name: "n8n", mod: "flowdeck"}`). Every 
 
 ## Done when
 
-- `herdr-app check mods/flowdeck` passes and `node --test tests/*.test.js` passes (19 tests).
+- `herdr-app check mods/flowdeck` passes and `node --test tests/*.test.js` passes (21 tests).
+- With each sprite, replaying Lead enrichment's failed run moves the sprite along the curved edge from Form submitted to Enrich company, then dwells there: the probe scanning, the goose pecking, the brackets breathing.
 - On Lead enrichment's failed run, "Ask about this", then "Why is it failing?", keeps the graph on screen. Flo scans the nodes the answer names, then lands on Enrich company with the "Likely cause" flag.
 - "Try with demo data" shows the Overview with numbers, bars that grow in, and a live feed.
 - On Workflows, "Stripe → HubSpot deal sync" shows its latest failed run: Stripe Trigger, Big deal? and Create deal ringed green, Notify #sales red and pulsing, Update contact faded. Replay walks it node by node.

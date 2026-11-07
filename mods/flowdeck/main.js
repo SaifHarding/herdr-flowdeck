@@ -22,6 +22,8 @@ import { workflowsView, sortedWorkflows } from "./workflows.js";
 import { failuresView } from "./failures.js";
 import { askView, AskSession } from "./ask.js";
 import { claudeInstalled } from "./claude.js";
+import { SPRITES, SPRITE_KEY, spriteKind, motionPrefs } from "./sprites.js";
+import { TICK } from "./motion.js";
 
 const PROFILES = "flowdeck.profiles";
 const ACTIVE = "flowdeck.active";
@@ -29,6 +31,7 @@ const ALERTED = "flowdeck.alerted";
 const SEEN = "flowdeck.seen";
 const LIST_COLLAPSED = "flowdeck.list-collapsed";
 const BADGE = "flowdeck.badge";
+const MOTION_KEY = "flowdeck.motion";
 const POLL_MS = 30e3;
 const FULL_MS = 5 * 60e3;
 const DETAIL_BATCH = 60;
@@ -39,6 +42,16 @@ const TABS = [
   { id: "failures", label: "Failures", icon: "inbox" },
   { id: "ask", label: "Ask Claude", icon: "spark" },
 ];
+
+// The system's "reduce motion": macOS accessibility, or GNOME's animations switch.
+async function systemReducesMotion() {
+  const p = os.platform();
+  try {
+    if (p === "macos" || p === "darwin") return (await exec("defaults", ["read", "com.apple.universalaccess", "reduceMotion"])).stdout.trim() === "1";
+    if (p === "linux") return (await exec("gsettings", ["get", "org.gnome.desktop.interface", "enable-animations"])).stdout.trim() === "false";
+  } catch {}
+  return false;
+}
 
 const sleep = (cx, ms) => new Promise((r) => cx.timer.after(ms, () => r()));
 const newId = () => `p-${randomBytes(5).toString("hex")}`;
@@ -88,6 +101,7 @@ export default class Flowdeck extends View {
     this.vault = null;
     this.platform = os.platform();
     cx.spawn(async (cx) => {
+      this.systemReduce = await systemReducesMotion();
       this.vault = await vaultKind();
       await sweepPrivateDir().catch(() => {});
       this.asking.installed = await claudeInstalled().catch(() => false);
@@ -165,6 +179,8 @@ export default class Flowdeck extends View {
       else { if (w) this.asking.scope = { kind: "workflow", workflowId: w.id, label: w.name }; this.go("ask", cx); }
     }
     else if (cmd === "toggle-list") this.toggleList(cx);
+    else if (cmd.startsWith("sprite-") && SPRITES.some((sp) => sp.id === cmd.slice(7))) setShared(SPRITE_KEY, cmd.slice(7));
+    else if (cmd === "next-sprite") { const i = SPRITES.findIndex((sp) => sp.id === spriteKind()); setShared(SPRITE_KEY, SPRITES[(i + 1) % SPRITES.length].id); }
     else if (cmd === "connect") { this.menu = false; this.inputs.url.set_value(""); this.showConnect(cx, { adding: Boolean(this.activeProfile()) }); }
     else if (cmd === "replay" && this.tab === "workflows") { if (this.replay) this.stopReplay(); else this.startReplay(cx); }
     else if (cmd === "next" || cmd === "prev") {
@@ -607,8 +623,22 @@ export default class Flowdeck extends View {
 
   // ── Drawing ─────────────────────────────────────────────────────────────────────────────────────────────────
 
+  reducedMotion() {
+    const pref = shared(MOTION_KEY);
+    return pref === "reduce" ? true : pref === "full" ? false : Boolean(this.systemReduce);
+  }
+
+  // A sprite's move steps every TICK ms while it travels (and through a honk), then stops: nothing ticks while
+  // sprites dwell, and a hidden graph isn't drawn, so its move doesn't ask for more.
+  pumpMotion(cx) {
+    if (this.motionTask || ![this.graph, this.failGraph, this.askGraph].some((g) => g?.needsTick)) return;
+    for (const g of [this.graph, this.failGraph, this.askGraph]) if (g) g.needsTick = false;
+    this.motionTask = cx.timer.after(TICK, (cx) => { this.motionTask = null; cx.notify(); });
+  }
+
   render(cx) {
     if (this.isBar) return this.renderBar();
+    motionPrefs.reduced = this.reducedMotion();
     const c = colors();
     const inOverlay = Boolean(props()?.overlay);
     if (this.mode === "loading") {
@@ -619,6 +649,7 @@ export default class Flowdeck extends View {
       : this.tab === "workflows" ? workflowsView(this, c)
       : this.tab === "failures" ? failuresView(this, c)
       : askView(this, c);
+    this.pumpMotion(cx);
     return v_flex().id("root").size_full().relative().bg(c.canvas ?? c.background).text_color(c.foreground).text_size(13)
       .on_size_change((size, cx) => { this.size = size; cx.notify(); })
       .child(this.header(c, inOverlay))
@@ -701,6 +732,21 @@ export default class Flowdeck extends View {
         .children(ps.map((p) => row(`p-${p.id}`, p.mode === "mcp" ? "plug" : "key", p.name, `${p.base.replace(/^https?:\/\//, "")} · ${p.mode === "mcp" ? "MCP" : "API"} ${p.tail ?? ""}`, (cx) => this.switchTo(p.id, cx), { active: this.profile?.id === p.id })))
         .child(row("p-demo", "play", "Demo instance", "Made-up data, nothing leaves your machine", (cx) => this.switchTo("demo", cx), { active: this.profile?.mode === "demo" }))
         .child(row("add", "plus", "Connect another instance", null, (cx) => { this.menu = false; this.inputs.url.set_value(""); this.showConnect(cx, { adding: true }); cx.notify(); }))
+        .child(div().h(1).bg(c.border).my(4))
+        .child(div().px(10).pt(4).pb(2).text_size(11).font_semibold().text_color(c.dim).child("FOCUS SPRITE"))
+        .child(h_flex().px(8).pb(4).gap(4).flex_wrap().children(SPRITES.map((sp) => {
+          const on = spriteKind() === sp.id;
+          return h_flex().id(`sprite-${sp.id}`).h(24).px(9).rounded(6).items_center().cursor_pointer().text_size(11.5).tooltip(sp.note)
+            .bg(on ? alpha(c.brand, 0.16) : "#00000000").border(1).border_color(on ? alpha(c.brand, 0.6) : c.border).text_color(on ? c.foreground : c.muted)
+            .hover((st) => st.bg(c.hover)).on_click((_e, cx) => { setShared(SPRITE_KEY, sp.id); cx.notify(); }).child(sp.label);
+        })))
+        .child(h_flex().px(10).py(4).gap(8).items_center()
+          .child(div().flex_1().text_size(11.5).text_color(c.muted).child(`Motion${shared(MOTION_KEY) ? "" : this.systemReduce ? " (system: reduced)" : ""}`))
+          .child(h_flex().gap(2).p(2).rounded(7).bg(alpha(c.foreground, 0.05)).children([["auto", "Auto"], ["reduce", "Reduce"], ["full", "Full"]].map(([id, text]) => {
+            const on = (shared(MOTION_KEY) ?? "auto") === id;
+            return h_flex().id(`motion-${id}`).h(22).px(8).rounded(5).items_center().cursor_pointer().text_size(11).text_color(on ? c.foreground : c.dim).bg(on ? c.raised : "#00000000")
+              .on_click((_e, cx) => { setShared(MOTION_KEY, id === "auto" ? null : id); cx.notify(); }).child(text);
+          }))))
         .child(div().h(1).bg(c.border).my(4))
         .child(v_flex().px(10).py(6).gap(4)
           .child(h_flex().gap(7).items_center().child(icon("shield", 13, c.ok)).child(div().text_size(11.5).text_color(c.muted).child("Read-only. Flowdeck never changes your n8n.")))

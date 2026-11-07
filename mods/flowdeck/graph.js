@@ -8,6 +8,7 @@ import { div, image, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { edgeCurve, travelled, CARD } from "./model.js";
 import { alpha, icon, spinner, MOTION, mono } from "./ui.js";
+import { focusSprite, spriteKind } from "./sprites.js";
 
 const GLIDE = { response: 420, damping: 0.92 };
 const SNAP = { response: 300, damping: 1, epsilon: 100000 };
@@ -139,14 +140,16 @@ function grid(state, c) {
   return window.paint_path(path, alpha(c.foreground, c.dark ? 0.09 : 0.12)).absolute().top(0).left(0).w(s.width).h(s.height);
 }
 
-function nodeCard(c, n, z, st, { selected, onSelect, entered, index, runInfo }) {
+function nodeCard(c, n, z, st, { selected, onSelect, entered, index, runInfo, shake = false }) {
   const w = n.w * z, h = n.h * z, r = (n.info.sub ? n.h / 2 : 11) * z;
   const ring = st === "error" ? c.err : st === "ok" ? c.ok : st === "running" ? c.run : selected ? c.brand : c.border;
   const dimmed = st === "skip";
   const tile = (n.info.sub ? 24 : 32) * z;
   const showType = z >= 0.6 && !n.info.sub, showName = z >= 0.42;
   const delay = 40 + index * 45;
+  // A shaken card (the goose honking at it) jitters 1.5 px either side, fast.
   let el = div().id(`node-${n.name}`).absolute().left(n.x * z).top(n.y * z).w(w).h(h)
+    .when(shake, (e) => e.loop("left", { from: n.x * z - 1.5, to: n.x * z + 1.5, period: 60, easing: "linear" }))
     .opacity(!entered ? 0 : dimmed ? 0.4 : n.disabled ? 0.5 : 1).transition("opacity", { ...MOTION.fade, delay: entered ? 0 : delay });
   // A soft halo behind a failed or running node, breathing.
   if (st === "error" || st === "running") {
@@ -245,6 +248,7 @@ function alertMark(c, n, z, labelText) {
 
 // The graph view. `run` (from extractRun) lays a run over the picture; `replay` ({ step }) shows it part-way.
 export function graphView(c, { id, graph, state, run, replay, selected, onSelect, onChange, active, focus, follow = false }) {
+  const kind = spriteKind();
   if (follow && state.size && graph?.nodes.length && focus?.node) {
     const key = `${graph.key}|${focus.node}`;
     if (state.followed !== key && !state.touched) { state.follow(graph, focus.node, Boolean(state.followed)); state.followed = key; state.fitted = graph.key; }
@@ -257,6 +261,10 @@ export function graphView(c, { id, graph, state, run, replay, selected, onSelect
   const gw = (graph?.width ?? 0) * z, gh = (graph?.height ?? 0) * z;
   const spring = state.glide ? GLIDE : SNAP;
   const paint = (path, color) => window.paint_path(path, color).absolute().top(0).left(0).w(gw).h(gh);
+  // The focus sprite first, so a honk can shake the node it stands on.
+  const fs = focus && graph?.nodes.length && kind !== "flo" ? focusSprite(c, state, graph, z, focus, kind) : null;
+  if (kind === "flo" || kind === "off" || !focus) state.motion && (state.motion.needsTick = false);
+  state.needsTick = Boolean(state.motion?.needsTick);
 
   const layer = div().id(`${id}-layer`).absolute().left(state.x).spring("left", spring).top(state.y).spring("top", spring).w(gw).h(gh)
     .opacity(state.entered ? 1 : 0).transition("opacity", MOTION.fade)
@@ -275,11 +283,13 @@ export function graphView(c, { id, graph, state, run, replay, selected, onSelect
     .children((graph?.nodes ?? []).map((n, i) => {
       const o = ran.get(n.name);
       const info = o ? `${o.status}${o.ms != null ? ` in ${o.ms} ms` : ""}${o.runs > 1 ? ` · ${o.runs} runs` : ""}` : null;
-      return nodeCard(c, n, z, states.get(n.name) ?? null, { selected: selected === n.name, onSelect, entered: state.entered, index: i, runInfo: info });
+      return nodeCard(c, n, z, states.get(n.name) ?? null, { selected: selected === n.name, onSelect, entered: state.entered, index: i, runInfo: info, shake: fs?.shake === n.name });
     }))
     .when(Boolean(focus?.alert), (e) => { const n = graph?.nodes.find((x) => x.name === focus.alert); return n ? e.child(alertMark(c, n, z, focus.alertLabel)) : e; })
-    .when(Boolean(focus?.scan), (e) => { const n = graph?.nodes.find((x) => x.name === focus.node); return n ? e.child(scanBeam(c, n, z)) : e; })
-    .when(Boolean(focus && graph?.nodes.length), (e) => { const f = sprite(c, state, graph, z, focus); return f ? e.child(f) : e; });
+    // The probe brings its own scan; the others keep Flowdeck's scan frame while Claude reads a node.
+    .when(Boolean(focus?.scan) && kind !== "probe", (e) => { const n = graph?.nodes.find((x) => x.name === focus.node); return n ? e.child(scanBeam(c, n, z)) : e; })
+    .when(Boolean(fs?.el), (e) => e.child(fs.el))
+    .when(kind === "flo" && Boolean(focus && graph?.nodes.length), (e) => { const f = sprite(c, state, graph, z, focus); return f ? e.child(f) : e; });
 
   return div().id(id).relative().size_full().overflow_hidden().bg(c.canvas ?? c.background)
     .on_size_change((size, cx) => {

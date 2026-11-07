@@ -236,3 +236,60 @@ test("a server that repeats its cursor or sends empty pages can't keep Flowdeck 
     assert.equal(calls, 1, "an empty page ends it");
   } finally { globalThis.fetch = real; }
 });
+
+test("focus sprites travel the real edge, either way, or a straight line when unconnected", async () => {
+  const { wireBetween, goosePath, probePath, along, HOVER } = await import("../mods/flowdeck/motion.js");
+  const g = layoutGraph(DEMO_WORKFLOWS.find((w) => w.id === "wf-stripe"));
+  const fwd = wireBetween(g, "Big deal?", "Create deal", 1);
+  const big = g.nodes.find((n) => n.name === "Big deal?"), deal = g.nodes.find((n) => n.name === "Create deal");
+  assert.ok(fwd.length > 10, "a sampled curve");
+  assert.deepEqual(fwd[0].map(Math.round), g.edges.find((e) => e.from === "Big deal?" && e.to === "Create deal").p1.map(Math.round));
+  assert.deepEqual(fwd.at(-1).map(Math.round), [deal.x, deal.y + deal.h / 2].map(Math.round));
+  const back = wireBetween(g, "Create deal", "Big deal?", 1);
+  assert.deepEqual(back[0], fwd.at(-1), "walked backwards");
+  assert.ok(along(back, 0.5)[2] < 0, "heading left");
+  const straight = wireBetween(g, "Stripe Trigger", "Notify #sales", 1);
+  assert.equal(straight.length, 2, "not connected: a straight line");
+  const z2 = wireBetween(g, "Big deal?", "Create deal", 2);
+  assert.deepEqual(z2[0], fwd[0].map((v) => v * 2), "screen units follow zoom");
+  const gp = goosePath(g, "Big deal?", "Create deal", 1);
+  assert.deepEqual(gp[0], [big.x + big.w * 0.55, big.y], "the goose starts on top of the card");
+  const pp = probePath(g, "Big deal?", "Create deal", 1);
+  assert.deepEqual(pp.at(-1), [deal.x + deal.w / 2, deal.y - HOVER], "the probe ends hovering over the next card");
+});
+
+test("focus moves are event-driven: travel on change, then dwell; honk every third stop; reduced motion jumps", async () => {
+  const { stepMotion, MOVE, pulseRange } = await import("../mods/flowdeck/motion.js");
+  const m = { node: null, moving: null, arrivals: 0, arrivedAt: 0, facing: 1 };
+  stepMotion(m, "A", "probe", false, 0);
+  assert.equal(m.moving, null, "first focus just appears");
+  stepMotion(m, "B", "probe", false, 1000);
+  assert.deepEqual([m.moving.from, m.moving.to], ["A", "B"]);
+  assert.ok(m.needsTick);
+  stepMotion(m, "B", "probe", false, 1000 + MOVE.probe / 2);
+  assert.ok(m.u > 0.45 && m.u < 0.55);
+  stepMotion(m, "B", "probe", false, 1000 + MOVE.probe + 10);
+  assert.equal(m.moving, null);
+  assert.ok(m.needsTick, "a beat more to fade the scan in");
+  stepMotion(m, "B", "probe", false, 1000 + MOVE.probe + 400);
+  assert.equal(m.needsTick, false, "then nothing ticks while dwelling");
+  const g = { node: "A", moving: null, arrivals: 1, arrivedAt: 0, facing: 1 };
+  stepMotion(g, "B", "goose", false, 0);
+  stepMotion(g, "B", "goose", false, MOVE.goose);
+  assert.equal(g.arrivals, 2);
+  stepMotion(g, "B", "goose", false, MOVE.goose + 1200);
+  assert.ok(g.honk, "third stop honks 0.9-1.7 s in");
+  stepMotion(g, "B", "goose", false, MOVE.goose + 2000);
+  assert.ok(!g.honk && !g.needsTick);
+  const r = { node: "A", moving: null, arrivals: 0, arrivedAt: 0, facing: 1 };
+  stepMotion(r, "B", "probe", true, 0);
+  assert.equal(r.moving, null, "reduced motion skips the travel");
+  const on = (p, t) => { const v = t < 0.5 ? p.from + (p.to - p.from) * 2 * t : p.to + (p.from - p.to) * (2 * t - 1); return Math.max(0, Math.min(1, v)); };
+  for (const duty of [0.3, 0.5, 0.0375]) {
+    const a = pulseRange(duty), b = pulseRange(1 - duty, true);
+    let lit = 0, both = 0;
+    for (let i = 0; i < 1000; i++) { const t = i / 1000; if (on(a, t) === 1) lit++; if (on(a, t) > 0 && on(b, t) > 0) both++; }
+    assert.ok(Math.abs(lit / 1000 - duty) < 0.03, `duty ${duty}: lit ${lit / 1000}`);
+    assert.ok(both / 1000 < 0.1, "the two layers take turns");
+  }
+});

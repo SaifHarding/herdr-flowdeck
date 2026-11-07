@@ -6,7 +6,15 @@ Your n8n instance in a [Herdr](https://herdr.dev) pane. Connect it with an API k
 - **Workflows**: every workflow drawn as a live graph, laid out the way you arranged it in n8n. Pick any run from the strip above the graph and its path lights up: green for nodes that ran, red and pulsing for the one that failed, faded for nodes the run never reached. Replay walks a run node by node. Click a node to inspect its settings, with secrets hidden.
 - **Failures**: a week of failures, grouped by workflow, node and error, so a run that failed 200 times is one line. Each group shows what n8n said, a first idea of why (expired credential, rate limit, timeout, bad data in a Code node, and so on), where it broke on the graph, and when it happened.
 - **Ask Claude**: ask about the whole instance, one workflow or one failure: "Why is this failing?", "Which workflows haven't run this week?", "What does this one do, step by step?". The answer streams in through your own Claude Code. Ask from the Ask tab, or dock Claude beside the graph ("Ask about this", or "Explain with Claude" on a failure) and fold the workflow list into a rail to give the graph room.
-- **Flo**: a little pixel-art bot who stands wherever the attention is. On a replay Flo hops node to node as the run plays, standing on the failing node with a red "!" (or a green ✓ when it finished). While Claude answers, Flo walks the graph in the order Claude names the nodes, and a scanning beam sweeps each one. When the answer is in, Flo goes to the node it blames, raises a red "!", and pins a pulsing **Likely cause** flag to it.
+- **Focus sprites**: a pixel-art sprite marks the node that has the attention, and travels the real edge when the attention moves. Pick one in the instance menu (or `flowdeck.sprite-<name>`):
+  - **Probe** (the default): a drone hovers over the node and scans it, its eye following the scan line. It flies along the wire with its thrusters lit.
+  - **Goose**: stands on the node and pecks it. Every third stop it honks and the node shakes. It walks off the card and waddles along the wire.
+  - **Brackets**: orange corner brackets breathe around the node, shrink to a dot that runs along the wire, and open around the next.
+  - **Flo**: the little coral bot.
+  - **Off**: no sprite.
+
+  "Motion" follows the system's reduce-motion setting. Set it to Reduce and sprites jump straight to the node and hold still.
+- **Flo, and what every sprite follows**: whatever sprite you pick stands wherever the attention is. On a replay Flo hops node to node as the run plays, standing on the failing node with a red "!" (or a green ✓ when it finished). While Claude answers, Flo walks the graph in the order Claude names the nodes, and a scanning beam sweeps each one. When the answer is in, Flo goes to the node it blames, raises a red "!", and pins a pulsing **Likely cause** flag to it.
 - **Alerts**: a Herdr toast the moment a run fails, with the failing node and the error. Clicking it brings you to Flowdeck.
 
 There's a demo mode with a made-up instance, so you can try it before connecting anything.
