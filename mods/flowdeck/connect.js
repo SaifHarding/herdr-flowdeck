@@ -3,7 +3,7 @@
 
 import { div } from "gpui-kit";
 import { h_flex, v_flex, Input } from "gpui-base";
-import { alpha, icon, button, rise, fadeIn } from "./ui.js";
+import { alpha, icon, button, rise, fadeIn, n8nMark } from "./ui.js";
 import { vaultName } from "./vault.js";
 
 const CREDIT_URL = "https://github.com/SaifHarding";
@@ -109,7 +109,13 @@ export function connectView(view, c) {
     .child(v_flex().id("scroll").absolute().top(0).left(0).size_full().overflow_y_scrollbar().items_center()
       .child(v_flex().w_full().max_w(500).px(20).py(40).gap(22)
         .child(v_flex().gap(14).items_center().map(rise(en, 0, 10))
-          .child(h_flex().size(52).rounded(15).items_center().justify_center().bg(c.brand).shadow_lg().child(icon("logo", 28, "#ffffff")))
+          // Flowdeck, joined to n8n: a link of dots pulsing between the two tiles.
+          .child(h_flex().gap(10).items_center()
+            .child(h_flex().size(52).rounded(15).items_center().justify_center().bg(c.brand).shadow_lg().child(icon("logo", 28, "#ffffff")))
+            .child(h_flex().gap(5).items_center().children([0, 1, 2].map((i) => div().size(5).rounded(3).bg(i === 1 ? c.foreground : c.dim)
+              .loop("opacity", { from: 0.25, to: 1, period: 900 + i * 300 }))))
+            .child(h_flex().h(52).px(14).rounded(15).items_center().justify_center().bg(c.raised).border(1).border_color(alpha(c.n8n, 0.35)).shadow_lg()
+              .child(n8nMark(c, 18))))
           .child(v_flex().gap(6).items_center()
             .child(div().text_size(24).font_semibold().text_center().child(view.adding ? "Connect another instance" : "Connect your n8n"))
             .child(div().max_w(400).text_size(13.5).text_color(c.muted).text_center()

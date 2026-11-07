@@ -11,7 +11,7 @@ import { h_flex, v_flex, InputState, TextareaState } from "gpui-base";
 import { shared, setShared, notify, panes, props, closeOverlay, run, exec, nextCommand } from "herdr";
 import os from "os";
 import { randomBytes } from "crypto";
-import { colors, alpha, icon, spinner, button, dot, ENTER_MS, MOTION, mono } from "./ui.js";
+import { colors, alpha, icon, spinner, button, dot, ENTER_MS, MOTION, mono, n8nMark } from "./ui.js";
 import { sourceFor, links, N8nError } from "./n8n.js";
 import { saveSecret, loadSecret, deleteSecret, sweepPrivateDir, vaultKind } from "./vault.js";
 import { normalizeUrl, checkKey, tail, indexRuns, groupFailures, kpis, histogram, extractRun, layoutGraph, failed, running, startOf, DAY, HOUR, ago } from "./model.js";
@@ -609,6 +609,7 @@ export default class Flowdeck extends View {
           .child(div().text_size(13.5).font_semibold().child("Flowdeck"))
           .child(h_flex().id("instance").gap(6).items_center().cursor_pointer().on_click((_e, cx) => { this.menu = !this.menu; cx.notify(); })
             .child(dot(d.error ? c.warn : live ? c.ok : c.dim, 7, Boolean(live)))
+            .child(n8nMark(c, 7))
             .child(div().max_w(220).truncate().text_size(11.5).text_color(c.muted).child(p?.name ?? ""))
             .child(div().px(5).h(15).rounded(4).flex().items_center().text_size(9.5).font_bold().text_color(p?.mode === "demo" ? c.brand : c.dim).border(1).border_color(p?.mode === "demo" ? alpha(c.brand, 0.6) : c.border).child(modeTag))
             .when(Boolean(p?.insecure), (e) => e.child(h_flex().px(5).h(15).gap(3).rounded(4).items_center().text_size(9.5).font_bold().text_color(c.warn).border(1).border_color(alpha(c.warn, 0.6))

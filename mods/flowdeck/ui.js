@@ -30,6 +30,8 @@ export function colors() {
     run: dark ? "#58a6ff" : "#0969da",
     brand: dark ? "#ff7a5c" : "#e8553b",
     brand2: dark ? "#ffb35c" : "#d9822b",
+    // n8n's own pink, for its mark wherever Flowdeck refers to n8n.
+    n8n: dark ? "#ff91ac" : "#e8436f",
   };
 }
 
@@ -163,5 +165,8 @@ export function empty(c, { iconName, title, body, action }) {
     .when(Boolean(body), (e) => e.child(div().max_w(380).text_size(12.5).text_color(c.muted).text_center().child(body)))
     .when(Boolean(action), (e) => e.child(action));
 }
+
+// The n8n mark (2.5:1), tinted with n8n's pink.
+export const n8nMark = (c, height) => svg(ICON("n8n")).w(height * 2.5).h(height).flex_none().text_color(c.n8n);
 
 export const mono = () => settings()?.font_family ?? "JetBrains Mono";

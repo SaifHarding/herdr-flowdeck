@@ -81,4 +81,4 @@ Herdr's `herdr-app check` catches what the runtime refuses, but a `.js` file isn
 
 ## Licence
 
-MIT. n8n is a trademark of n8n GmbH; Flowdeck is an independent project and isn't affiliated with or endorsed by n8n.
+MIT, for Flowdeck's own code and art. The n8n mark (`mods/flowdeck/icons/n8n.svg`, taken from n8n's design system) is a trademark of n8n GmbH. Flowdeck uses it only to show where it's talking about n8n. Flowdeck is an independent project and isn't affiliated with or endorsed by n8n.

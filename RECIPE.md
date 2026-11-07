@@ -14,7 +14,7 @@ The mod fills its pane (a tab: `tab.new {name: "n8n", mod: "flowdeck"}`). Every 
 
 **Connect screen** (when no instance is connected). Behind everything, three soft lights drift slowly. Each is three concentric discs at 3.5–5% opacity, in coral, violet `#8b5cf6` and cyan `#22d3ee`. Centred in a 500 px column:
 
-- A 52 px coral tile with the Flowdeck glyph, the title "Connect your n8n" at 24 px semibold, and a one-line pitch.
+- A 52 px coral Flowdeck tile joined by three pulsing dots to a 52 px tile holding n8n's mark in n8n pink (`#ff91ac`, or `#e8436f` in light themes; the mark is `icons/n8n.svg` from n8n's design system), then the title "Connect your n8n" at 24 px semibold, and a one-line pitch.
 - A 16 px-rounded card holding:
   - A segmented control: API key | MCP token.
   - Three 38 px fields: instance address, the key (masked, with an eye toggle) and an optional name.
@@ -27,7 +27,7 @@ The mod fills its pane (a tab: `tab.new {name: "n8n", mod: "flowdeck"}`). Every 
 
 **Header** (52 px, `chrome`), left to right:
 
-- A 30 px coral logo tile, "Flowdeck", and the instance name. A pulsing green dot shows it's live (amber on error). An API, MCP or DEMO tag follows, and a chevron opens the instance menu.
+- A 30 px coral logo tile, "Flowdeck", and the instance name. A pulsing green dot shows it's live (amber on error), followed by a small n8n mark. An API, MCP or DEMO tag follows, and a chevron opens the instance menu.
 - Centred pill tabs: Overview, Workflows, Failures (with a red count of new failure groups) and Ask Claude.
 - On the right: "Synced 12s ago", a refresh button (it spins while syncing), and a gear button that opens the menu.
 - Below 980 px wide, the tabs show icons only.
