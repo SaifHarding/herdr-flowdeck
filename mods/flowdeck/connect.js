@@ -74,13 +74,18 @@ export function connectView(view, c) {
     .map(rise(en, 120, 14))
     .child(segmented(c, f.mode, (id, cx) => { f.mode = id; f.error = null; cx.notify(); }))
     .child(field(c, { id: "url", labelText: "Instance address", input: view.inputs.url }))
-    .when(Boolean(f.warning), (e) => e.child(h_flex().gap(7).mt(-8).items_center().child(icon("alert", 12, c.warn)).child(div().text_size(11.5).text_color(c.warn).child(f.warning))))
+    .when(Boolean(f.needsOptIn), (e) => e.child(toggle(c, {
+      id: "insecure", on: Boolean(f.allowInsecure),
+      labelText: "Allow plain http on this network",
+      sub: "Anyone on the same network could read your key. Only for a network you trust; https is better.",
+      onToggle: (cx) => { f.allowInsecure = !f.allowInsecure; f.error = null; cx.notify(); },
+    })))
     .child(field(c, { id: "key", labelText: mcp ? "MCP access token" : "API key", input: view.inputs.key, trailing: eye, hint: mcp ? "Bearer token" : "X-N8N-API-KEY" }))
     .child(field(c, { id: "name", labelText: "Name", input: view.inputs.name }))
     .child(toggle(c, {
       id: "remember", on: f.remember && canRemember, disabled: !canRemember,
       labelText: canRemember ? `Remember in ${where}` : "Remember the key",
-      sub: canRemember ? (f.remember ? "Encrypted by the OS, and only Flowdeck's command can read it" : "Kept in memory until Herdr quits") : "No keychain found here, so the key lasts until Herdr quits",
+      sub: canRemember ? (f.remember ? "Encrypted at rest by the OS; never in a file, a setting or a command line" : "Kept in memory until Herdr quits") : "No keychain found here, so the key lasts until Herdr quits",
       onToggle: (cx) => { f.remember = !f.remember; cx.notify(); },
     }))
     .when(Boolean(f.error), (e) => e.child(h_flex().px(11).py(9).gap(9).items_start().rounded(9).bg(alpha(c.err, 0.1)).border(1).border_color(alpha(c.err, 0.4))

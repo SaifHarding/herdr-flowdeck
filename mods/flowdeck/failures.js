@@ -59,7 +59,16 @@ function detail(view, c, m, g) {
         .child(div().text_size(12).text_color(c.dim).child(`${plural(g.count, "failure")} in 7 days · ${g.last24} in the last 24h · first ${ago(startOf(first), m.now)}, last ${ago(startOf(g.latest), m.now)}`)))
       .child(h_flex().gap(8).flex_none()
         .child(button(c, { id: "explain", label: "Explain with Claude", iconName: "spark", kind: "primary", size: "sm",
-          onClick: (_e, cx) => view.ask(`Why is "${g.node ?? "this workflow"}" failing in "${g.workflow}", and what exactly should I change to fix it?`, cx, { kind: "failure", workflowId: g.workflowId, runId: String(g.latest.id), label: `${g.workflow}${g.node ? ` › ${g.node}` : ""}` }) }))
+          // Explained beside the graph, so Flo can scan the nodes as Claude names them and flag the culprit.
+          onClick: (_e, cx) => {
+            const w = m.byId.get(g.workflowId);
+            const q = `Why is "${g.node ?? "this workflow"}" failing in "${g.workflow}", and what exactly should I change to fix it?`;
+            if (!w) { view.ask(q, cx, { kind: "failure", workflowId: g.workflowId, runId: String(g.latest.id), label: g.workflow }); return; }
+            view.showWorkflow(g.workflowId, cx, { runId: String(g.latest.id) });
+            view.openDock(w, cx, { runId: String(g.latest.id) });
+            view.asking.scope = { kind: "failure", workflowId: g.workflowId, runId: String(g.latest.id), label: `${g.workflow}${g.node ? ` › ${g.node}` : ""}` };
+            view.ask(q, cx);
+          } }))
         .child(button(c, { id: "show-graph", label: "Show in graph", iconName: "flow", size: "sm", onClick: (_e, cx) => view.showWorkflow(g.workflowId, cx, { runId: String(g.latest.id), node: g.node }) }))
         .when(!demo, (e) => e.child(button(c, { id: "open-run", iconName: "external", size: "sm", tooltip: "Open this run in n8n", onClick: () => view.openLink(links.execution(base, g.workflowId, g.latest.id)) })))))
     .when(Boolean(h), (e) => e.child(h_flex().px(13).py(11).gap(11).items_start().rounded(10).bg(alpha(toneColor, 0.1)).border(1).border_color(alpha(toneColor, 0.35)).map(rise(en, 60, 6))

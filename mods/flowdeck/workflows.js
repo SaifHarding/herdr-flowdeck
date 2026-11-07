@@ -5,7 +5,8 @@ import { div } from "gpui-kit";
 import { h_flex, v_flex, Input } from "gpui-base";
 import { alpha, icon, button, chip, dot, runStrip, statusColor, empty, spinner, rise, mono } from "./ui.js";
 import { graphView, graphControls } from "./graph.js";
-import { ago, duration, durationOf, when, triggerOf, redact, nodeInfo, startOf, running, KINDS } from "./model.js";
+import { askDock, claudeFocus } from "./ask.js";
+import { ago, duration, durationOf, when, triggerOf, redactNode, nodeInfo, startOf, running, KINDS } from "./model.js";
 import { links } from "./n8n.js";
 
 const ORDER = { failing: 0, flaky: 1, healthy: 2, quiet: 3 };
@@ -28,15 +29,41 @@ export function sortedWorkflows(view) {
 
 const runsFor = (s) => (s?.runs ?? []).map((r) => ({ id: r.id, status: r.status ?? (r.finished ? "success" : "error"), ms: durationOf(r), tip: `${r.status} · ${when(startOf(r))} · ${duration(durationOf(r))}` }));
 
+const LIST_W = 318, RAIL_W = 58;
+
+// The workflow list folds to a rail of health dots, so the graph (and Claude, docked beside it) get the room.
+function rail(view, c, m, ws) {
+  // Same id as the full list, so the width eases between the two.
+  return v_flex().id("wf-list").flex_none().h_full().border_r(1).border_color(c.border).bg(c.chrome ?? c.surface).items_center()
+    .w(RAIL_W).transition("width", { duration: 260, easing: "ease-out" })
+    .child(v_flex().py(10).items_center().border_b(1).border_color(c.border).w_full()
+      .child(button(c, { id: "list-open", iconName: "sidebar", kind: "subtle", tooltip: "Show workflows", onClick: (_e, cx) => view.toggleList(cx) })))
+    .child(v_flex().id("wf-rail-rows").flex_1().min_h(0).overflow_y_scrollbar().py(8).gap(4).items_center().w_full()
+      .children(ws.slice(0, 200).map((w) => {
+        const st = m.stats.get(w.id), on = view.sel.workflowId === w.id;
+        const col = !w.active ? c.dim : statusColor(c, st?.health);
+        const initials = w.name.replace(/[^A-Za-z0-9 ]/g, " ").trim().split(/\s+/).slice(0, 2).map((x) => x[0]?.toUpperCase() ?? "").join("");
+        return h_flex().id(`rail-${w.id}`).relative().size(38).rounded(10).items_center().justify_center().cursor_pointer()
+          .bg(on ? alpha(c.brand, 0.16) : "#00000000").border(1).border_color(on ? alpha(c.brand, 0.5) : "#00000000")
+          .hover((s2) => s2.bg(on ? alpha(c.brand, 0.2) : c.hover)).tooltip(`${w.name}${st?.fails24 ? ` · ${st.fails24} failed today` : ""}`)
+          .on_click((_e, cx) => view.showWorkflow(w.id, cx))
+          .child(div().text_size(11.5).font_semibold().text_color(w.active ? c.foreground : c.dim).child(initials || "·"))
+          .child(div().absolute().top(3).right(3).child(dot(col, 7, st?.health === "failing" && w.active)));
+      })));
+}
+
 function list(view, c, m) {
   const ws = sortedWorkflows(view);
+  if (view.listCollapsed) return rail(view, c, m, ws);
   const failingCount = [...m.stats.values()].filter((s) => s.health === "failing" || s.health === "flaky").length;
   const f = view.sel.filter;
   const setF = (id) => (_e, cx) => { view.sel.filter = id; cx.notify(); };
-  return v_flex().id("wf-list").w(318).flex_none().h_full().border_r(1).border_color(c.border).bg(c.chrome ?? c.surface)
+  return v_flex().id("wf-list").w(LIST_W).transition("width", { duration: 260, easing: "ease-out" }).flex_none().h_full().overflow_hidden().border_r(1).border_color(c.border).bg(c.chrome ?? c.surface)
     .child(v_flex().p(12).gap(10).border_b(1).border_color(c.border)
-      .child(h_flex().h(34).px(10).gap(8).items_center().rounded(8).border(1).border_color(c.input ?? c.border).bg(c.background).cursor_text()
-        .child(icon("search", 13, c.dim)).child(Input.new(view.inputs.search).flex_1().h_full().text_size(12.5).text_color(c.foreground)))
+      .child(h_flex().gap(8).items_center()
+        .child(h_flex().flex_1().min_w(0).h(34).px(10).gap(8).items_center().rounded(8).border(1).border_color(c.input ?? c.border).bg(c.background).cursor_text()
+          .child(icon("search", 13, c.dim)).child(Input.new(view.inputs.search).flex_1().h_full().text_size(12.5).text_color(c.foreground)))
+        .child(button(c, { id: "list-close", iconName: "sidebar", kind: "subtle", tooltip: "Hide workflows", onClick: (_e, cx) => view.toggleList(cx) })))
       .child(h_flex().gap(6)
         .child(chip(c, { id: "f-all", label: "All", count: view.data.workflows.length, active: f === "all", onClick: setF("all") }))
         .child(chip(c, { id: "f-active", label: "Active", active: f === "active", onClick: setF("active") }))
@@ -87,7 +114,7 @@ function inspector(view, c, w, run) {
   const info = nodeInfo(n.type);
   const o = run?.order.find((x) => x.name === n.name);
   const failedHere = run?.node === n.name;
-  const params = JSON.stringify(redact(n.parameters ?? {}), null, 2);
+  const params = JSON.stringify(redactNode(n), null, 2);
   const shown = params.length > 6000 ? `${params.slice(0, 6000)}\n…` : params;
   return v_flex().id("inspector").w(320).flex_none().h_full().border_l(1).border_color(c.border).bg(c.surface)
     .child(h_flex().p(14).gap(10).items_center().border_b(1).border_color(c.border)
@@ -105,7 +132,7 @@ function inspector(view, c, w, run) {
         .when(failedHere && Boolean(run.description), (e2) => e2.child(div().text_size(11.5).font_family(mono()).text_color(c.muted).child(run.description)))
         .when((o?.runs ?? 0) > 1, (e2) => e2.child(div().text_size(11.5).text_color(c.dim).child(`Ran ${o.runs} times in this execution`)))
         .when(failedHere, (e2) => e2.child(h_flex().pt(4).child(button(c, { id: "insp-ask", label: "Ask Claude why", iconName: "spark", size: "sm", kind: "primary",
-          onClick: (_e, cx) => view.ask(`Why did "${n.name}" fail in "${w.name}", and how do I fix it?`, cx, { kind: "failure", workflowId: w.id, runId: run.id, label: `${w.name} › ${n.name}` }) }))))))
+          onClick: (_e, cx) => { view.openDock(w, cx, { runId: run.id }); view.ask(`Why did "${n.name}" fail in "${w.name}", and how do I fix it?`, cx); } }))))))
       .when(Boolean(n.credentials), (e) => e.child(v_flex().gap(6).child(div().text_size(11).font_semibold().text_color(c.dim).child("CREDENTIALS"))
         .children(Object.keys(n.credentials).map((k) => h_flex().gap(7).items_center().child(icon("lock", 12, c.dim)).child(div().text_size(12).text_color(c.muted).child(k))))))
       .child(v_flex().gap(6)
@@ -152,15 +179,13 @@ export function workflowsView(view, c) {
             .child(dot(w.active ? c.ok : c.dim, 6, w.active)).child(div().child(w.active ? "Active" : "Inactive"))))
         .child(div().truncate().text_size(11.8).text_color(c.dim).child(`${triggerOf(w)} trigger · ${(w.nodes ?? []).length} nodes${(w.tags ?? []).length ? ` · ${(w.tags ?? []).map((t) => `#${t.name ?? t}`).join(" ")}` : ""}${w.updatedAt ? ` · edited ${ago(Date.parse(w.updatedAt), m.now)}` : ""}`)))
       .child(h_flex().gap(8).flex_none()
-        .child(button(c, { id: "wf-ask", label: "Ask about this", iconName: "spark", size: "sm", onClick: (_e, cx) => {
-          view.asking.scope = { kind: "workflow", workflowId: w.id, label: w.name };
-          view.go("ask", cx);
-        } }))
+        .child(button(c, { id: "wf-ask", label: view.dockOpen ? "Asking Claude" : "Ask about this", iconName: "spark", size: "sm", kind: view.dockOpen ? "solid" : "ghost",
+          onClick: (_e, cx) => (view.dockOpen ? view.closeDock(cx) : view.openDock(w, cx)) }))
         .when(view.profile?.mode !== "demo", (e) => e.child(button(c, { id: "wf-open", label: "Open in n8n", iconName: "external", size: "sm", onClick: () => view.openLink(links.workflow(base, w.id)) }))));
     const canvas = w.partial
       ? v_flex().flex_1().items_center().justify_center().gap(10).child(w.detailError ? icon("alert", 18, c.warn) : spinner(18, c.brand)).child(div().text_size(12).text_color(c.muted).child(w.detailError ?? "Loading the workflow…"))
       : div().id("canvas-wrap").relative().flex_1().min_w(0).h_full()
-        .child(graphView(c, { id: "graph", graph, state: view.graph, run, replay: view.replay, selected: view.sel.node, active: w.active, focus: focusOf(view, graph, run),
+        .child(graphView(c, { id: "graph", graph, state: view.graph, run, replay: view.replay, selected: view.sel.node, active: w.active, focus: (view.dockOpen && !view.replay && claudeFocus(view, w.id)) || focusOf(view, graph, run),
           onSelect: (name, cx) => { view.sel.node = name; cx.notify(); }, onChange: notify }))
         .child(div().absolute().bottom(14).right(14).child(graphControls(c, { id: "gc", state: view.graph, graph, onChange: notify })))
         .child(h_flex().absolute().bottom(14).left(14).gap(12).px(10).py(6).rounded(8).bg(alpha(c.surface, 0.9)).border(1).border_color(c.border).text_size(11).text_color(c.muted)
@@ -174,7 +199,9 @@ export function workflowsView(view, c) {
     main = v_flex().flex_1().min_w(0).h_full()
       .child(head)
       .when(Boolean(view.source?.has.executions), (e) => e.child(runBar(view, c, w, s, run)))
-      .child(h_flex().flex_1().min_h(0).w_full().items_stretch().child(canvas).when(Boolean(view.sel.node), (e) => e.child(inspector(view, c, w, run) ?? div())));
+      .child(h_flex().flex_1().min_h(0).w_full().items_stretch().child(canvas)
+        .when(Boolean(view.sel.node) && (!view.dockOpen || view.inspectFromDock), (e) => e.child(inspector(view, c, w, run) ?? div()))
+        .when(Boolean(view.dockOpen), (e) => e.child(askDock(view, c, w))));
   }
   return h_flex().id("workflows").size_full().child(list(view, c, m)).child(main);
 }

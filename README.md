@@ -5,8 +5,8 @@ Your n8n instance in a [Herdr](https://herdr.dev) pane. Connect it with an API k
 - **Overview**: how the instance is doing right now. Runs, success rate, failures and median duration over 24 hours, compared with yesterday. An hour-by-hour activity chart (or day by day for the week), the busiest workflows, what needs attention, and a live feed of runs as they land.
 - **Workflows**: every workflow drawn as a live graph, laid out the way you arranged it in n8n. Pick any run from the strip above the graph and its path lights up: green for nodes that ran, red and pulsing for the one that failed, faded for nodes the run never reached. Replay walks a run node by node. Click a node to inspect its settings, with secrets hidden.
 - **Failures**: a week of failures, grouped by workflow, node and error, so a run that failed 200 times is one line. Each group shows what n8n said, a first idea of why (expired credential, rate limit, timeout, bad data in a Code node, and so on), where it broke on the graph, and when it happened.
-- **Ask Claude**: ask about the whole instance, one workflow or one failure: "Why is this failing?", "Which workflows haven't run this week?", "What does this one do, step by step?". The answer streams in through your own Claude Code.
-- **Flo**: a little pixel-art bot who stands wherever the attention is. On a replay Flo hops node to node as the run plays, standing on the failing node with a red "!" (or a green ✓ when it finished). In Ask Claude, a "Claude's focus" panel follows the answer: Flo walks the workflow in the order Claude names its nodes, with the camera gliding along behind, and thinks out loud while Claude is still writing.
+- **Ask Claude**: ask about the whole instance, one workflow or one failure: "Why is this failing?", "Which workflows haven't run this week?", "What does this one do, step by step?". The answer streams in through your own Claude Code. Ask from the Ask tab, or dock Claude beside the graph ("Ask about this", or "Explain with Claude" on a failure) and fold the workflow list into a rail to give the graph room.
+- **Flo**: a little pixel-art bot who stands wherever the attention is. On a replay Flo hops node to node as the run plays, standing on the failing node with a red "!" (or a green ✓ when it finished). While Claude answers, Flo walks the graph in the order Claude names the nodes, and a scanning beam sweeps each one. When the answer is in, Flo goes to the node it blames, raises a red "!", and pins a pulsing **Likely cause** flag to it.
 - **Alerts**: a Herdr toast the moment a run fails, with the failing node and the error. Clicking it brings you to Flowdeck.
 
 There's a demo mode with a made-up instance, so you can try it before connecting anything.
@@ -36,7 +36,7 @@ For a quick look without a tab, `mod.open:flowdeck` opens it as a large dialog, 
 Merge [keys.json](keys.json) into `~/.config/herdr-app/keys.json`:
 
 - `ctrl-shift-n` opens Flowdeck in a new tab.
-- While Flowdeck has focus: `ctrl-1` to `ctrl-4` switch views, `ctrl-r` refreshes, `ctrl-j`/`ctrl-k` move to the next or previous workflow or failure, `ctrl-shift-r` replays the selected run, and `ctrl-shift-a` asks Claude about the selected workflow.
+- While Flowdeck has focus: `ctrl-b` folds the workflow list. `ctrl-1` to `ctrl-4` switch views, `ctrl-r` refreshes, `ctrl-j`/`ctrl-k` move to the next or previous workflow or failure, `ctrl-shift-r` replays the selected run, and `ctrl-shift-a` docks Claude beside the selected workflow.
 
 ## Connecting
 
@@ -47,16 +47,16 @@ Merge [keys.json](keys.json) into `~/.config/herdr-app/keys.json`:
 | Runs, failures, alerts | yes | no: n8n's MCP server doesn't share run history |
 | Sent as | `X-N8N-API-KEY` header | `Authorization: Bearer` |
 
-The address can be an n8n Cloud one (`https://you.app.n8n.cloud`) or self-hosted. Paste it however you copied it: `/home/workflows`, `/api/v1` and the like are trimmed off. Public addresses must be `https://`. Plain `http://` is accepted only for this machine or a private network (`localhost`, `192.168.x.x`, `*.local`, Tailscale), and Flowdeck flags it.
+The address can be an n8n Cloud one (`https://you.app.n8n.cloud`) or self-hosted. Paste it however you copied it: `/home/workflows`, `/api/v1` and the like are trimmed off. Public addresses must be `https://`. Plain `http://` works for this machine (`localhost`). For a private network (`192.168.x.x`, `*.local`, Tailscale), you have to tick "Allow plain http on this network", and an amber HTTP badge stays in the header from then on.
 
 You can connect several instances (production and staging, say) and switch between them from the instance menu in the header.
 
 ## Security, in short
 
-- **Keys live in the macOS Keychain** or the Linux system keyring (GNOME Keyring or KWallet, through `secret-tool`). Where there's neither, a key lasts only until Herdr quits. A key is never written to settings, shared state, logs or a command line.
+- **Keys live in the macOS Keychain** or the Linux system keyring (GNOME Keyring or KWallet, through `secret-tool`). Where there's neither, a key lasts only until Herdr quits. A key is never written to settings, shared state, logs or a command line. Each key is tied to its instance's address, so it can't be redirected.
 - **Read-only.** Flowdeck only ever sends GET requests to the REST API. Over MCP it calls only `search_workflows` and `get_workflow_details`; anything else is refused in code.
 - **Your key goes only to your instance.** Herdr refuses to replay a key across a redirect to another host, and Flowdeck rejects any answer that came from a different address.
-- **Claude sees only what you ask about, after you've said yes once.** It gets workflow structure and error messages. It never gets credentials, pinned data or the items your runs processed. Fields named like secrets, and values that look like keys or tokens, are masked first. Claude runs with every tool, MCP server, hook and setting turned off, so whatever a workflow's text says, it can only write an answer.
+- **Claude sees only what you ask about, after you've said yes for that instance and scope.** "See exactly what's sent" shows the context word for word. It gets workflow structure and error messages. It never gets credentials, pinned data or the items your runs processed. Secrets in parameters, headers, bodies, URLs and code are masked first, by pattern, so check the preview if your workflows keep secrets outside n8n credentials. Claude runs with every tool, MCP server, hook and setting turned off. Answers are drawn without images or HTML, and their links only open your own workflow pages or n8n's docs.
 - **Run data stays in memory** while the pane is open. Nothing about your workflows is written to disk.
 
 Full details: [SECURITY.md](SECURITY.md).
@@ -70,7 +70,7 @@ Full details: [SECURITY.md](SECURITY.md).
 ## Developing
 
 ```sh
-node --test tests/                    # model, redaction, layout and URL rules
+node --test tests/*.test.js           # model, redaction, layout, URL and paging rules
 node tools/mock-n8n.mjs 5679 &        # a fake n8n: REST API, MCP endpoint, a redirect trap
 node tools/mock-n8n.mjs 5680 &        # catches any key that follows a redirect (logs LEAK)
 ```

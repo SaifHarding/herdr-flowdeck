@@ -187,7 +187,7 @@ function nodeCard(c, n, z, st, { selected, onSelect, entered, index, runInfo }) 
 // failed, the one Claude is talking about) and hops to the next with a bouncy spring. It turns to face where it's
 // going, bobs while it waits, and says how things are going in a bubble: thinking dots, a red "!", a green tick.
 const HOP = { response: 620, damping: 0.6 };
-const MOODS = { think: { text: null }, error: { text: "!" }, ok: { text: "✓" }, look: { text: null } };
+const MOODS = { think: { text: null }, scan: { text: null }, error: { text: "!" }, ok: { text: "✓" }, look: { text: null } };
 
 function sprite(c, state, graph, z, focus) {
   const n = graph.nodes.find((x) => x.name === focus?.node);
@@ -199,7 +199,10 @@ function sprite(c, state, graph, z, focus) {
   state.flo = { x, facing: state.flo?.facing ?? "r" };
   const mood = MOODS[focus.mood] ? focus.mood : "look";
   const tone = mood === "error" ? c.err : mood === "ok" ? c.ok : c.brand;
-  const bubble = mood === "think"
+  const bubble = mood === "scan"
+    ? h_flex().absolute().left(S * 0.6).top(-16).size(18).rounded(9).items_center().justify_center().bg(c.popover ?? c.surface).border(1).border_color(alpha(c.run, 0.7))
+      .child(icon("search", 11, c.run).loop("opacity", { from: 0.5, to: 1, period: 600 }))
+    : mood === "think"
     ? h_flex().absolute().left(S * 0.55).top(-15).h(16).px(6).rounded(8).items_center().bg(c.popover ?? c.surface).border(1).border_color(alpha(c.brand, 0.6))
       .child(div().w(16).text_size(10).font_bold().text_color(c.brand).frames(["•  ", "•• ", "•••", " ••", "  •", "   "], 160).child(""))
     : MOODS[mood].text
@@ -212,11 +215,32 @@ function sprite(c, state, graph, z, focus) {
     // A shadow on the card's edge, breathing with the bob.
     .child(div().absolute().left(S * 0.18).top(S - 3).w(S * 0.64).h(5).rounded(3).bg(alpha("#000000", c.dark ? 0.55 : 0.25))
       .loop("opacity", { from: 0.45, to: 1, period: mood === "think" ? 520 : 1100 }))
-    .child(div().absolute().left(0).top(0).size(S).loop("top", { from: 0, to: mood === "think" ? -4 : -2.5, period: mood === "think" ? 520 : 1100 })
+    .child(div().absolute().left(0).top(0).size(S).loop("top", { from: 0, to: mood === "think" || mood === "scan" ? -4 : -2.5, period: mood === "think" || mood === "scan" ? 520 : 1100 })
       .child(image(`mods/flowdeck/sprite/flo-${state.flo.facing}.svg`).size(S)))
     // The antenna's glow.
     .child(div().absolute().left(S * 0.34).top(-S * 0.06).size(S * 0.32).rounded(S).bg(alpha("#ffd36e", 0.35)).loop("opacity", { from: 0.2, to: 0.9, period: 1400 }))
     .when(Boolean(bubble), (e) => e.child(bubble));
+}
+
+// A scanner sweeping over the node Flo is examining: a tinted frame with a bright line that runs down the card and back.
+function scanBeam(c, n, z) {
+  const w = n.w * z, h = n.h * z, r = (n.info.sub ? n.h / 2 : 11) * z;
+  return div().id(`scan-${n.name}`).absolute().left(n.x * z - 3).top(n.y * z - 3).w(w + 6).h(h + 6).rounded(r + 3).overflow_hidden()
+    .border(1.5).border_color(alpha(c.run, 0.85)).bg(alpha(c.run, 0.07))
+    .child(div().absolute().left(0).w(w + 6).h(Math.max(6, 12 * z)).bg(alpha(c.run, 0.16))
+      .top(0).loop("top", { from: -4, to: h - 4, period: 900, easing: "ease-in-out" }))
+    .child(div().absolute().left(0).w(w + 6).h(2).bg(alpha(c.run, 0.95))
+      .top(0).loop("top", { from: 0, to: h + 4, period: 900, easing: "ease-in-out" }));
+}
+
+// What the answer blames, pinned to the node: a red ring that pulses and a "Likely cause" flag on the card's corner.
+function alertMark(c, n, z, labelText) {
+  const w = n.w * z, h = n.h * z, r = (n.info.sub ? n.h / 2 : 11) * z;
+  return div().id(`alert-${n.name}`).absolute().left(n.x * z - 7).top(n.y * z - 7).w(w + 14).h(h + 14)
+    .child(div().absolute().left(0).top(0).w(w + 14).h(h + 14).rounded(r + 7).border(2).border_color(c.err).loop("opacity", { from: 0.25, to: 1, period: 1000 }))
+    .child(div().absolute().left(0).top(0).w(w + 14).h(h + 14).rounded(r + 7).bg(alpha(c.err, 0.1)).loop("opacity", { from: 0.3, to: 1, period: 1000 }))
+    .child(h_flex().absolute().left(2).top(h + 16).h(20).px(8).gap(5).rounded(10).items_center().bg(c.err).shadow_md()
+      .child(icon("alert", 11, "#ffffff")).child(div().text_size(10.5).font_bold().text_color("#ffffff").child(labelText ?? "Likely cause")));
 }
 
 // The graph view. `run` (from extractRun) lays a run over the picture; `replay` ({ step }) shows it part-way.
@@ -253,6 +277,8 @@ export function graphView(c, { id, graph, state, run, replay, selected, onSelect
       const info = o ? `${o.status}${o.ms != null ? ` in ${o.ms} ms` : ""}${o.runs > 1 ? ` · ${o.runs} runs` : ""}` : null;
       return nodeCard(c, n, z, states.get(n.name) ?? null, { selected: selected === n.name, onSelect, entered: state.entered, index: i, runInfo: info });
     }))
+    .when(Boolean(focus?.alert), (e) => { const n = graph?.nodes.find((x) => x.name === focus.alert); return n ? e.child(alertMark(c, n, z, focus.alertLabel)) : e; })
+    .when(Boolean(focus?.scan), (e) => { const n = graph?.nodes.find((x) => x.name === focus.node); return n ? e.child(scanBeam(c, n, z)) : e; })
     .when(Boolean(focus && graph?.nodes.length), (e) => { const f = sprite(c, state, graph, z, focus); return f ? e.child(f) : e; });
 
   return div().id(id).relative().size_full().overflow_hidden().bg(c.canvas ?? c.background)

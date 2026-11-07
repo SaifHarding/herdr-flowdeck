@@ -18,15 +18,21 @@ export const privateDir = () => `${appHome()}/.flowdeck`;
 
 export async function ensurePrivateDir() {
   const dir = privateDir();
-  await exec("mkdir", ["-p", "-m", "700", dir]);
-  // mkdir -m only applies to a folder it creates; make sure an older one is closed too.
-  await exec("chmod", ["700", dir]);
+  // mkdir -m only applies to a folder it creates, so close an older one too, then check it really is ours alone and
+  // not a link somewhere else. Nothing secret is written until this holds.
+  const r = await exec("sh", ["-c", 'mkdir -p -m 700 "$1" && chmod 700 "$1" && [ -d "$1" ] && [ ! -L "$1" ] && [ -O "$1" ] && m=$(stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1") && [ "$m" = 700 ]', "sh", dir]);
+  if (r.code !== 0) throw new Error("Flowdeck's private folder isn't private, so it won't write a key there");
   return dir;
 }
 
-const account = (id) => {
+// The keychain item is named for the profile and the instance's origin together, so a profile whose address was
+// changed behind Flowdeck's back (shared state is writable) finds no key, rather than sending it somewhere new.
+const account = (id, base) => {
   if (!/^[a-z0-9-]{1,40}$/.test(id)) throw new Error("bad profile id");
-  return id;
+  let origin;
+  try { origin = new URL(base).origin; } catch { throw new Error("bad instance address"); }
+  if (!/^https?:\/\/[a-z0-9.\-:[\]]{1,300}$/.test(origin)) throw new Error("bad instance address");
+  return `${id}@${origin}`;
 };
 
 async function has(cmd) {
@@ -51,8 +57,8 @@ const SESSION = "flowdeck.session.";
 async function viaStdin(contents, script, args) {
   const dir = await ensurePrivateDir();
   const file = `${dir}/k-${randomBytes(8).toString("hex")}`;
-  await fs.writeFile(file, contents);
   try {
+    await fs.writeFile(file, contents);
     await exec("chmod", ["600", file]);
     return await exec("sh", ["-c", `umask 077; ${script}; c=$?; rm -f "$1"; exit $c`, "sh", file, ...args]);
   } finally {
@@ -60,39 +66,39 @@ async function viaStdin(contents, script, args) {
   }
 }
 
-export async function saveSecret(id, secret, { remember = true } = {}) {
+export async function saveSecret(id, base, secret, { remember = true } = {}) {
   const { key, error } = checkKey(secret);
   if (error) throw new Error(error);
   const kind = remember ? await vaultKind() : "session";
   if (kind === "keychain") {
     // security -i reads commands from stdin; checkKey guarantees the key has no quotes or spaces to escape.
-    const r = await viaStdin(`add-generic-password -U -s "${SERVICE}" -a "${account(id)}" -l "${LABEL}" -w "${key}"\n`, 'security -i < "$1" >/dev/null', []);
+    const r = await viaStdin(`add-generic-password -U -s "${SERVICE}" -a "${account(id, base)}" -l "${LABEL}" -w "${key}"\n`, 'security -i < "$1" >/dev/null', []);
     if (r.code !== 0) throw new Error("The Keychain didn't save the key");
   } else if (kind === "secret-service") {
-    const r = await viaStdin(key, 'secret-tool store --label="$2" service "$3" account "$4" < "$1"', [LABEL, SERVICE, account(id)]);
+    const r = await viaStdin(key, 'secret-tool store --label="$2" service "$3" account "$4" < "$1"', [LABEL, SERVICE, account(id, base)]);
     if (r.code !== 0) throw new Error("The system keyring didn't save the key");
   } else {
-    sessionStorage.setItem(SESSION + account(id), key);
+    sessionStorage.setItem(SESSION + account(id, base), key);
   }
   return kind;
 }
 
-export async function loadSecret(id) {
-  const session = sessionStorage.getItem(SESSION + account(id));
+export async function loadSecret(id, base) {
+  const session = sessionStorage.getItem(SESSION + account(id, base));
   if (session) return session;
   const kind = await vaultKind();
   let r = null;
-  if (kind === "keychain") r = await exec("security", ["find-generic-password", "-s", SERVICE, "-a", account(id), "-w"]).catch(() => null);
-  else if (kind === "secret-service") r = await exec("secret-tool", ["lookup", "service", SERVICE, "account", account(id)]).catch(() => null);
+  if (kind === "keychain") r = await exec("security", ["find-generic-password", "-s", SERVICE, "-a", account(id, base), "-w"]).catch(() => null);
+  else if (kind === "secret-service") r = await exec("secret-tool", ["lookup", "service", SERVICE, "account", account(id, base)]).catch(() => null);
   const key = r?.code === 0 ? r.stdout.trim() : "";
   return checkKey(key).key ?? null;
 }
 
-export async function deleteSecret(id) {
-  sessionStorage.removeItem(SESSION + account(id));
+export async function deleteSecret(id, base) {
+  sessionStorage.removeItem(SESSION + account(id, base));
   const kind = await vaultKind();
-  if (kind === "keychain") await exec("security", ["delete-generic-password", "-s", SERVICE, "-a", account(id)]).catch(() => null);
-  else if (kind === "secret-service") await exec("secret-tool", ["clear", "service", SERVICE, "account", account(id)]).catch(() => null);
+  if (kind === "keychain") await exec("security", ["delete-generic-password", "-s", SERVICE, "-a", account(id, base)]).catch(() => null);
+  else if (kind === "secret-service") await exec("secret-tool", ["clear", "service", SERVICE, "account", account(id, base)]).catch(() => null);
 }
 
 // Leftovers from a crash mid-save: nothing in the private folder should outlive the command that wrote it.

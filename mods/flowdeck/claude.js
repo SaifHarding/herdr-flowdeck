@@ -44,7 +44,13 @@ export async function startAsk({ prompt, system, model }) {
 
 // What the stream says so far: the answer's text, and whether Claude has finished.
 export async function readAsk(job) {
-  const raw = (await readTextFile(job.out).catch(() => null)) ?? "";
+  let raw = (await readTextFile(job.out).catch(() => null)) ?? "";
+  // readTextFile stops at 1 MiB; a very long answer's stream outgrows that, so read its last part instead (the result
+  // line, which carries the whole text, is always last).
+  if (!raw || raw.length >= 1024 * 1024 - 1) {
+    const t = await exec("tail", ["-c", "1000000", job.out]).catch(() => null);
+    if (t?.code === 0 && t.stdout) raw = t.stdout.slice(t.stdout.indexOf("\n") + 1);
+  }
   let text = "", result = null, error = null;
   for (const line of raw.split("\n")) {
     if (!line.startsWith("{")) continue;

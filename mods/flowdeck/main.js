@@ -27,6 +27,7 @@ const PROFILES = "flowdeck.profiles";
 const ACTIVE = "flowdeck.active";
 const ALERTED = "flowdeck.alerted";
 const SEEN = "flowdeck.seen";
+const LIST_COLLAPSED = "flowdeck.list-collapsed";
 const POLL_MS = 30e3;
 const FULL_MS = 5 * 60e3;
 const DETAIL_BATCH = 60;
@@ -55,7 +56,14 @@ export default class Flowdeck extends View {
     };
     this.inputs.key.set_masked(true);
     this.inputs.ask.set_auto_grow(1, 6);
-    this.inputs.url.on("change", (_e, cx) => { this.form.error = null; this.form.warning = normalizeUrl(this.inputs.url.value()).warning ?? null; cx.notify(); });
+    this.inputs.url.on("change", (_e, cx) => {
+      const u = normalizeUrl(this.inputs.url.value(), { allowInsecure: true });
+      this.form.error = null;
+      this.form.needsOptIn = Boolean(u.insecure);
+      if (!u.insecure) this.form.allowInsecure = false;
+      this.form.warning = u.insecure ? u.warning : null;
+      cx.notify();
+    });
     this.inputs.key.on("change", (_e, cx) => { this.form.error = null; cx.notify(); });
     this.inputs.key.on("submit", (_e, cx) => this.connect(cx));
     this.inputs.url.on("submit", (_e, cx) => this.inputs.key.focus());
@@ -68,6 +76,8 @@ export default class Flowdeck extends View {
     this.replay = null;
     this.menu = false;
     this.hoverBar = null;
+    this.dockOpen = false;
+    this.listCollapsed = Boolean(shared(LIST_COLLAPSED));
     this.asking = new AskSession();
     this.data = this.emptyData();
     this.vault = null;
@@ -110,9 +120,10 @@ export default class Flowdeck extends View {
     else if (cmd === "demo") cx.spawn(async (cx) => this.tryDemo(cx));
     else if (cmd === "ask-about" && this.mode === "app") {
       const w = this.derived().byId.get(this.sel.workflowId);
-      if (w) this.asking.scope = { kind: "workflow", workflowId: w.id, label: w.name };
-      this.go("ask", cx);
+      if (w && this.tab === "workflows") { if (this.dockOpen) this.closeDock(cx); else this.openDock(w, cx); }
+      else { if (w) this.asking.scope = { kind: "workflow", workflowId: w.id, label: w.name }; this.go("ask", cx); }
     }
+    else if (cmd === "toggle-list") this.toggleList(cx);
     else if (cmd === "replay" && this.tab === "workflows") { if (this.replay) this.stopReplay(); else this.startReplay(cx); }
     else if (cmd === "next" || cmd === "prev") {
       const list = this.tab === "failures" ? this.derived().groups.map((g) => g.key) : sortedWorkflows(this).map((w) => w.id);
@@ -143,7 +154,8 @@ export default class Flowdeck extends View {
 
   async connect(cx) {
     if (this.form.busy) return;
-    const url = normalizeUrl(this.inputs.url.value());
+    const url = normalizeUrl(this.inputs.url.value(), { allowInsecure: this.form.allowInsecure });
+    this.form.needsOptIn = Boolean(url.needsOptIn) || (Boolean(url.insecure) && this.form.allowInsecure);
     if (url.error) { this.form.error = url.error; cx.notify(); return; }
     const k = checkKey(this.inputs.key.value());
     if (k.error) { this.form.error = k.error; cx.notify(); return; }
@@ -155,8 +167,8 @@ export default class Flowdeck extends View {
       const source = sourceFor({ mode, base: url.base }, k.key);
       await source.check();
       const id = newId();
-      const vault = await saveSecret(id, k.key, { remember: this.form.remember });
-      const profile = { id, name: this.inputs.name.value().trim().slice(0, 40) || url.host, base: url.base, mode, tail: tail(k.key), vault, added: new Date().toISOString() };
+      const vault = await saveSecret(id, url.base, k.key, { remember: this.form.remember });
+      const profile = { id, name: this.inputs.name.value().trim().slice(0, 40) || url.host, base: url.base, mode, tail: tail(k.key), vault, insecure: url.insecure, added: new Date().toISOString() };
       setShared(PROFILES, [...this.profiles(), profile]);
       setShared(ACTIVE, id);
       this.inputs.key.set_value("");
@@ -186,7 +198,13 @@ export default class Flowdeck extends View {
     cx.notify();
     try {
       if (!source) {
-        const secret = profile.mode === "demo" ? null : await loadSecret(profile.id);
+        // Shared state is writable by any mod: check the stored address against the same rules as the connect form
+        // before a key goes anywhere near it.
+        if (profile.mode !== "demo") {
+          const u = normalizeUrl(profile.base, { allowInsecure: Boolean(profile.insecure) });
+          if (u.error || u.base !== profile.base) throw new N8nError(`This instance's saved address isn't allowed (${u.error ?? "it changed"}). Connect it again.`, "nokey");
+        }
+        const secret = profile.mode === "demo" ? null : await loadSecret(profile.id, profile.base);
         if (profile.mode !== "demo" && !secret) {
           this.data.loading = false;
           this.data.error = { kind: "nokey", message: profile.vault === "session" ? "This instance's key was kept only until Herdr quit. Connect it again." : "Couldn't read this instance's key from the keychain." };
@@ -215,7 +233,7 @@ export default class Flowdeck extends View {
     if (!p) return;
     await this.asking.cancel();
     if (p.mode !== "demo") {
-      await deleteSecret(p.id);
+      await deleteSecret(p.id, p.base);
       setShared(PROFILES, this.profiles().filter((x) => x.id !== p.id));
       for (const k of [ALERTED, SEEN]) {
         const v = { ...(shared(k) ?? {}) };
@@ -280,7 +298,7 @@ export default class Flowdeck extends View {
     }
     if (replace) {
       // A full sync is the truth for the week, but keeps anything newer it raced with.
-      const newest = Math.max(0, ...list.map(startOf));
+      const newest = list.reduce((m, e) => Math.max(m, startOf(e)), 0);
       for (const [id, e] of known) if (startOf(e) <= newest) known.delete(id);
     }
     for (const e of list) known.set(String(e.id), e);
@@ -295,7 +313,7 @@ export default class Flowdeck extends View {
     const ids = list.filter(failed).map((e) => numeric(e.id)).filter((n) => n !== null);
     if (!ids.length || !this.profile) return;
     const all = shared(ALERTED) ?? {};
-    const max = Math.max(...ids);
+    const max = ids.reduce((m, n) => Math.max(m, n), 0);
     if ((all[this.profile.id] ?? 0) < max) setShared(ALERTED, { ...all, [this.profile.id]: max });
   }
 
@@ -350,6 +368,9 @@ export default class Flowdeck extends View {
     for (const id of todo) d.pending.add(id);
     const worker = async () => {
       while (todo.length) {
+        // Rate limited: everything waits, details included.
+        while (Date.now() < (d.backoff ?? 0)) await sleep(cx, Math.min(5000, d.backoff - Date.now()));
+        if (this.source !== source) return;
         const id = todo.shift();
         try {
           const detail = await source.execution(id);
@@ -357,7 +378,7 @@ export default class Flowdeck extends View {
           d.runs.set(id, extractRun(detail));
         } catch (e) {
           // Rate limited: wait and let a later batch retry. Anything else: don't ask for this run again.
-          if (e.kind === "rate") await sleep(cx, 5000);
+          if (e.kind === "rate") { d.backoff = Date.now() + 60e3; todo.push(id); }
           else d.unreadable.add(id);
         } finally {
           d.pending.delete(id);
@@ -493,6 +514,32 @@ export default class Flowdeck extends View {
     exec(cmd, args).catch(() => {});
   }
 
+  toggleList(cx) {
+    this.listCollapsed = !this.listCollapsed;
+    setShared(LIST_COLLAPSED, this.listCollapsed);
+    cx.notify();
+  }
+
+  // Ask Claude beside the graph. About the selected run's failure when there is one, else the workflow.
+  openDock(w, cx, { runId = null } = {}) {
+    const id = runId ?? this.sel.runId;
+    const run = id ? this.data.runs.get(String(id)) : null;
+    this.asking.scope = run?.node
+      ? { kind: "failure", workflowId: w.id, runId: String(id), label: `${w.name} › ${run.node}` }
+      : { kind: "workflow", workflowId: w.id, label: w.name };
+    this.stopReplay();
+    this.dockOpen = true;
+    this.inspectFromDock = false;
+    this.sel.node = null;
+    cx.timer.after(80, () => { try { this.inputs.ask.focus(); } catch {} });
+    cx.notify();
+  }
+
+  closeDock(cx) {
+    this.dockOpen = false;
+    cx.notify();
+  }
+
   // ── Asking ──────────────────────────────────────────────────────────────────────────────────────────────────
 
   askCurrent(cx) {
@@ -504,7 +551,8 @@ export default class Flowdeck extends View {
 
   ask(question, cx, scope) {
     if (scope) this.asking.scope = scope;
-    if (this.tab !== "ask") this.go("ask", cx);
+    // Docked beside a workflow, the answer comes there; otherwise in the Ask tab.
+    if (this.tab !== "ask" && !(this.tab === "workflows" && this.dockOpen)) this.go("ask", cx);
     cx.spawn(async (cx) => {
       const sc = this.asking.scope;
       if (sc.kind !== "all") await this.ensureWorkflow(sc.workflowId, cx);
@@ -562,6 +610,8 @@ export default class Flowdeck extends View {
             .child(dot(d.error ? c.warn : live ? c.ok : c.dim, 7, Boolean(live)))
             .child(div().max_w(220).truncate().text_size(11.5).text_color(c.muted).child(p?.name ?? ""))
             .child(div().px(5).h(15).rounded(4).flex().items_center().text_size(9.5).font_bold().text_color(p?.mode === "demo" ? c.brand : c.dim).border(1).border_color(p?.mode === "demo" ? alpha(c.brand, 0.6) : c.border).child(modeTag))
+            .when(Boolean(p?.insecure), (e) => e.child(h_flex().px(5).h(15).gap(3).rounded(4).items_center().text_size(9.5).font_bold().text_color(c.warn).border(1).border_color(alpha(c.warn, 0.6))
+              .tooltip("Plain http: your key crosses this network unencrypted. Put n8n behind https to fix it.").child(icon("alert", 9, c.warn)).child(div().child("HTTP"))))
             .child(icon("chevron-down", 11, c.dim)))))
       .child(h_flex().gap(4).items_center().p(3).rounded(10).bg(alpha(c.foreground, 0.04)).children(nav))
       .child(h_flex().gap(8).items_center().flex_none()
@@ -583,7 +633,7 @@ export default class Flowdeck extends View {
         this.inputs.url.set_value(this.profile?.base ?? "");
         this.inputs.name.set_value(this.profile?.name ?? "");
         this.form.mode = this.profile?.mode === "mcp" ? "mcp" : "api";
-        cx.spawn(async (cx) => { if (this.profile?.mode !== "demo") { await deleteSecret(this.profile.id); setShared(PROFILES, this.profiles().filter((x) => x.id !== this.profile.id)); } this.showConnect(cx); cx.notify(); });
+        cx.spawn(async (cx) => { if (this.profile?.mode !== "demo") { await deleteSecret(this.profile.id, this.profile.base); setShared(PROFILES, this.profiles().filter((x) => x.id !== this.profile.id)); } this.showConnect(cx); cx.notify(); });
       } })))
       .when(!fix, (el) => el.child(button(c, { id: "retry", label: "Retry", size: "sm", onClick: (_e, cx) => cx.spawn(async (cx) => this.refresh(cx, { full: true })) })));
   }

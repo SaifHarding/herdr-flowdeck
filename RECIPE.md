@@ -51,6 +51,11 @@ The mod fills its pane (a tab: `tab.new {name: "n8n", mod: "flowdeck"}`). Every 
 - Main connections are curves from the right side to the left side, with arrowheads. Multi-output nodes label their ports (true/false, done/loop). AI connections are dashed and rise into the agent's bottom edge.
 - At the bottom right are zoom − % + and fit. At the bottom left is a legend. A node inspector (320 px) opens on the right when a node is clicked.
 
+- **Folding the list.** A sidebar button at the right of the search field folds the list into a 58 px rail. The width eases over 260 ms, and the folded state is kept in `shared("flowdeck.list-collapsed")`. The rail shows a 38 px tile per workflow (its initials, with a health dot on the corner, and its name as a tooltip) and a button to unfold.
+- **Dock.** "Ask about this" (or "Ask Claude why" in the inspector, or "Explain with Claude" on a failure) opens a 400 px Ask Claude dock to the right of the graph, in place of the inspector. It's about the selected run's failure when there is one, else the workflow. It has a header (spark tile, "Ask Claude", scope, model picker, close), a compact question box, a status strip, and the conversation, newest first.
+  - While Claude reads, the strip is blue with a spinner: "Claude is reading the workflow…", then "Flo is scanning **node**" with a `3/7` counter.
+  - When the answer is in and names a culprit, the strip turns red: "Likely cause **node** ›". Clicking it opens that node's inspector beside the dock.
+
 **Failures**:
 
 - A 410 px list of groups: a fault-kind icon, the workflow, "at node", the message, a red count pill, a sparkline and the age. Chips switch between the last 7 days and the last 24h.
@@ -75,12 +80,13 @@ The mod fills its pane (a tab: `tab.new {name: "n8n", mod: "flowdeck"}`). Every 
 - **Flo** moves with a bouncy spring (response 620 ms, damping 0.6) and turns to face where it's going.
   - In Workflows: on the replay's current node (thinking); with a run selected, on the failing node ("!") or the last node (✓); on a clicked node; else on the trigger.
   - In Failures: on the failing node.
-  - In Ask: Flo walks the nodes in the order Claude's answer names them (`mentionsInOrder`, repeats in a row collapsed), one hop every 700 ms, so the tour plays out even when the text arrives in one burst. The panel's camera centres Flo's node at a readable zoom (55–90%) and glides after it until the person pans.
+  - On the big graph with the dock open, and in the Ask tab's panel: Flo walks the nodes in the order Claude's answer names them (`mentionsInOrder`, repeats in a row collapsed), one hop every 700 ms, so the tour plays out even when the text arrives in one burst. The panel's camera centres Flo's node at a readable zoom (55–90%) and glides after it until the person pans.
 - **Graph.** Drag to pan. Scroll pans; ⌘/Ctrl-scroll zooms around the pointer (25–200%). The buttons zoom by 1.2×, and fit springs to fit. Until you pan or zoom, the graph refits whenever the pane resizes. Clicking a node opens the inspector, and clicking the background closes it.
+- **Scanning and the alert.** While Flo walks, the node it's on gets a scan frame: a 1.5 px running-blue border with a tint, and a bright 2 px line plus a soft band sweeping down the card and back every 900 ms. Flo's bubble is a magnifier. When the answer is done, `culpritIn` picks the node named most often in sentences about something going wrong (fail, error, expired, refused, timeout, 401/429/5xx, undefined…); when the question was about a failure and the answer blames no node, it falls back to the failing node. Flo goes there with a red "!". The node gets a 2 px red ring and tint pulsing every second, and a red "⚠ Likely cause" pill under its corner.
 - **Hints** read the error: 401/403, expired or "credentials" → auth; 429 or "rate limit" → rate; timeouts and connection resets → network; "cannot read properties", TypeError → code; 5xx → server; "not found" → missing.
 - **Ask.** It runs `claude -p` in the background with no tools, streaming `stream-json` that is read every 160 ms. Stop kills only that process. The answer is cut off after 4 minutes.
 - **Entrances.** Every view rises 8 px and fades in, staggered 40–60 ms. Bars and meters grow from zero. All motion is native (`.transition`, `.spring`, `.loop`, `.spin`, `.frames`); timers only fetch data, and replay steps once per node.
-- **Keys** (`flowdeck.<command>`): `overview`, `workflows`, `failures`, `ask`, `ask-about`, `refresh`, `demo`, `next`, `prev`, `replay`.
+- **Keys** (`flowdeck.<command>`): `overview`, `workflows`, `failures`, `ask`, `ask-about` (docks Claude on Workflows), `toggle-list`, `refresh`, `demo`, `next`, `prev`, `replay`.
 
 ## Built from
 
@@ -106,6 +112,8 @@ The mod fills its pane (a tab: `tab.new {name: "n8n", mod: "flowdeck"}`). Every 
 - `"transparent"` isn't a colour; use `#00000000`.
 - `h_flex()` centres its children vertically. Rows of cards with different heights need `.items_start()`, and a canvas beside an inspector needs `.items_stretch()` and `.h_full()`, or it collapses to its content height.
 - A graph fitted on the first `on_size_change` fits a pane that hasn't settled yet. Keep refitting until the person moves it.
+- Answers are markdown from a model that read untrusted text: strip images and raw HTML before `TextView.markdown`, or an injected image URL leaks data without a click.
+- Keep regexes that run on server text bounded, and cut the input first. An unbounded JWT-style pattern backtracks for minutes on crafted input.
 - `node --check file.js` doesn't parse ES modules: copy a file to `.mjs` to syntax-check it. Herdr's parse errors can point at the wrong line.
 - Herdr docks a copy of any new mod folder into the shown layout the first time it sees it, unless `mod.json` already says `"place": "none"`. Write `mod.json` first.
 - Herdr's `fetch` has no timeout option (it gives up after about 30 s), no response headers and no redirect option. It refuses cross-origin redirects that would replay caller headers, which is what keeps the key safe.
@@ -116,7 +124,8 @@ The mod fills its pane (a tab: `tab.new {name: "n8n", mod: "flowdeck"}`). Every 
 
 ## Done when
 
-- `herdr-app check mods/flowdeck` passes and `node --test tests/` passes (12 tests).
+- `herdr-app check mods/flowdeck` passes and `node --test tests/*.test.js` passes (19 tests).
+- On Lead enrichment's failed run, "Ask about this", then "Why is it failing?", keeps the graph on screen. Flo scans the nodes the answer names, then lands on Enrich company with the "Likely cause" flag.
 - "Try with demo data" shows the Overview with numbers, bars that grow in, and a live feed.
 - On Workflows, "Stripe → HubSpot deal sync" shows its latest failed run: Stripe Trigger, Big deal? and Create deal ringed green, Notify #sales red and pulsing, Update contact faded. Replay walks it node by node.
 - Asking "Walk me through what this workflow does, node by node" about Lead enrichment makes Flo walk Form submitted → Enrich company → … in the order the answer names them, with the counter counting up.

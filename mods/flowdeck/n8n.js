@@ -11,6 +11,7 @@ import { DAY, startOf } from "./model.js";
 const MAX_WORKFLOWS = 1000;
 const MAX_EXECUTIONS = 3000;
 const MAX_BODY = 6 * 1024 * 1024;
+const MAX_PAGES = 20;
 
 export class N8nError extends Error {
   constructor(message, kind = "network", status = null) {
@@ -25,7 +26,7 @@ function explain(status, body) {
   if (status === 404) return new N8nError("n8n's API isn't at this address. Check the URL, and that the public API is turned on (Settings → n8n API).", "notfound", status);
   if (status === 429) return new N8nError("n8n is rate limiting requests. Flowdeck will try again shortly.", "rate", status);
   let msg = "";
-  try { msg = JSON.parse(body)?.message ?? ""; } catch {}
+  try { msg = JSON.parse(String(body).slice(0, 4096))?.message ?? ""; } catch {}
   return new N8nError(`n8n answered ${status}${msg ? `: ${String(msg).slice(0, 200)}` : ""}`, "server", status);
 }
 
@@ -45,7 +46,7 @@ async function getJson(base, path, headers) {
   }
   if (res.url && !sameOrigin(base, res.url)) throw new N8nError("The answer came from a different address than your instance. Refusing it.", "redirect");
   const text = await res.text();
-  if (!res.ok) throw explain(res.status, text);
+  if (!res.ok) throw explain(res.status, text.slice(0, 4096));
   if (text.length > MAX_BODY) throw new N8nError("n8n sent more than Flowdeck will read in one answer.", "server");
   try { return JSON.parse(text); } catch { throw new N8nError("n8n's answer wasn't JSON. Is this the n8n address, not a login page?", "server"); }
 }
@@ -64,33 +65,36 @@ export class RestSource {
     await getJson(this.base, "/api/v1/workflows?limit=1", this.headers);
   }
 
-  async workflows() {
-    const out = [];
+  // Pages until n8n says there are no more, the cap is reached, or the server misbehaves (an empty page, a cursor it
+  // already gave): a buggy or hostile server can't keep Flowdeck fetching forever.
+  async paged(path, max, stop) {
+    const out = [], seen = new Set();
     let cursor = null;
-    do {
-      const page = await getJson(this.base, `/api/v1/workflows?limit=250${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, this.headers);
-      out.push(...(page.data ?? []));
-      cursor = page.nextCursor ?? null;
-    } while (cursor && out.length < MAX_WORKFLOWS);
-    return out.filter((w) => !w.isArchived);
+    for (let pages = 0; pages < MAX_PAGES; pages++) {
+      const page = await getJson(this.base, `${path}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, this.headers);
+      const data = Array.isArray(page?.data) ? page.data.slice(0, 250) : [];
+      for (const x of data) if (out.length < max) out.push(x);
+      cursor = typeof page?.nextCursor === "string" ? page.nextCursor : null;
+      if (!data.length || !cursor || seen.has(cursor) || out.length >= max || stop?.(data)) break;
+      seen.add(cursor);
+    }
+    return out;
+  }
+
+  async workflows() {
+    const out = await this.paged("/api/v1/workflows?limit=250", MAX_WORKFLOWS);
+    return out.filter((w) => w && typeof w === "object" && !w.isArchived);
   }
 
   // The last week of runs, newest first, without their data.
   async executions(since = Date.now() - 7 * DAY) {
-    const out = [];
-    let cursor = null;
-    do {
-      const page = await getJson(this.base, `/api/v1/executions?limit=250&includeData=false${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, this.headers);
-      const data = page.data ?? [];
-      out.push(...data);
-      cursor = page.nextCursor ?? null;
-      if (data.length && startOf(data[data.length - 1]) < since) break;
-    } while (cursor && out.length < MAX_EXECUTIONS);
-    return out.filter((e) => startOf(e) >= since || !e.startedAt);
+    const out = await this.paged("/api/v1/executions?limit=250&includeData=false", MAX_EXECUTIONS, (data) => startOf(data[data.length - 1]) < since);
+    return out.filter((e) => e && typeof e === "object" && (startOf(e) >= since || !e.startedAt));
   }
 
   async recent() {
-    return (await getJson(this.base, "/api/v1/executions?limit=100&includeData=false", this.headers)).data ?? [];
+    const page = await getJson(this.base, "/api/v1/executions?limit=100&includeData=false", this.headers);
+    return Array.isArray(page?.data) ? page.data.slice(0, 100) : [];
   }
 
   async execution(id) {
@@ -166,7 +170,8 @@ export class McpSource {
 
   async workflows() {
     const r = await this.call("search_workflows", { limit: 200 });
-    const list = Array.isArray(r) ? r : r?.data ?? r?.workflows ?? r?.items ?? [];
+    const found = Array.isArray(r) ? r : r?.data ?? r?.workflows ?? r?.items ?? [];
+    const list = Array.isArray(found) ? found.filter((w) => w && typeof w === "object") : [];
     // Details fill in nodes and connections; until then a workflow has what search gave.
     const out = [];
     for (const w of list.slice(0, 200)) out.push({ ...w, id: String(w.id), nodes: w.nodes ?? [], connections: w.connections ?? {}, partial: true });
