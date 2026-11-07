@@ -25,6 +25,8 @@ The mod fills its pane (a tab: `tab.new {name: "n8n", mod: "flowdeck"}`). Every 
 - Under the card, three trust points with icons: Keys stay local, Read-only, You choose.
 - Below them, a centred 30 px pill with a border: the GitHub mark, "Built by **SaifHarding**" and an external-link arrow. Clicking it opens https://github.com/SaifHarding in the browser.
 
+**Header button** (optional; a block with `props: { bar: true }`, 48 px, in a bar row): a 26 px hover button on `chrome` with a bottom border, holding the Flowdeck glyph at 16 px (`muted`, or `foreground` when there's news). When there are new failure causes, a red count pill (`99+` cap) breathes beside it. Its tooltip is "Open Flowdeck · <instance>" or "Flowdeck: N new failure causes on <instance>". Clicking it runs `tab.select` on the tab holding the Flowdeck pane (found with `panes()`), or `tab.new {name: "n8n", mod: "flowdeck"}` when there's none. It syncs nothing: the full copy writes `shared("flowdeck.badge") = { unseen, name }`, and only when that changes.
+
 **Header** (52 px, `chrome`), left to right:
 
 - A 30 px coral logo tile, "Flowdeck", and the instance name. A pulsing green dot shows it's live (amber on error), followed by a small n8n mark. An API, MCP or DEMO tag follows, and a chevron opens the instance menu.

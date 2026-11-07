@@ -28,6 +28,7 @@ const ACTIVE = "flowdeck.active";
 const ALERTED = "flowdeck.alerted";
 const SEEN = "flowdeck.seen";
 const LIST_COLLAPSED = "flowdeck.list-collapsed";
+const BADGE = "flowdeck.badge";
 const POLL_MS = 30e3;
 const FULL_MS = 5 * 60e3;
 const DETAIL_BATCH = 60;
@@ -45,6 +46,10 @@ const numeric = (id) => (/^\d+$/.test(String(id)) ? Number(id) : null);
 
 export default class Flowdeck extends View {
   init(_props, cx) {
+    // A copy in a bar (`props: { bar: true }`) is only a button that opens Flowdeck: it syncs nothing itself and reads
+    // the failure badge the full copy publishes.
+    this.isBar = Boolean(props()?.bar);
+    if (this.isBar) return;
     this.mode = "loading";
     this.form = { mode: "api", show: false, remember: true, busy: false, error: null, warning: null, entered: false };
     this.inputs = {
@@ -107,7 +112,43 @@ export default class Flowdeck extends View {
   }
 
   async close() {
+    if (this.isBar) return;
     await this.asking.cancel();
+  }
+
+  // ── The header button ─────────────────────────────────────────────────────────────────────────────────────────
+
+  // Goes to the Flowdeck tab if there is one, else opens one.
+  static openFlowdeck() {
+    const mine = panes().find((p) => p.mod === "flowdeck");
+    if (mine) run("tab.select", { id: mine.tab });
+    else run("tab.new", { name: "n8n", mod: "flowdeck" });
+  }
+
+  renderBar() {
+    const c = colors();
+    const b = shared(BADGE) ?? {};
+    const fresh = Number(b.unseen) || 0;
+    const tip = fresh ? `Flowdeck: ${fresh} new failure cause${fresh === 1 ? "" : "s"}${b.name ? ` on ${b.name}` : ""}` : `Open Flowdeck${b.name ? ` · ${b.name}` : ""}`;
+    return h_flex().id("fd-bar").size_full().px(4).items_center().justify_center().bg(c.chrome ?? c.surface).border_b(1).border_color(c.border)
+      .child(h_flex().id("fd-btn").relative().h(26).px(7).gap(6).rounded(5).items_center().cursor_pointer()
+        .hover((s) => s.bg(c.hover)).tooltip(tip)
+        .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+        .on_click(() => Flowdeck.openFlowdeck())
+        .child(icon("logo", 16, fresh ? c.foreground : c.muted))
+        .when(fresh > 0, (e) => e.child(h_flex().h(15).min_w(15).px(4).rounded(8).items_center().justify_center().bg(c.err)
+          .loop("opacity", { from: 0.7, to: 1, period: 1400 })
+          .child(div().text_size(9.5).font_bold().text_color("#ffffff").child(fresh > 99 ? "99+" : String(fresh))))));
+  }
+
+  // What the header button shows, written only when it changes (every write re-renders every mod).
+  updateBadge() {
+    if (this.isBar || !this.profile) return;
+    const seen = (shared(SEEN) ?? {})[this.profile.id] ?? 0;
+    const unseen = this.derived().groups.filter((g) => startOf(g.latest) > seen).length;
+    const next = { unseen, name: this.profile.name };
+    const cur = shared(BADGE);
+    if (!cur || cur.unseen !== next.unseen || cur.name !== next.name) setShared(BADGE, next);
   }
 
   emptyData() {
@@ -285,6 +326,7 @@ export default class Flowdeck extends View {
     }
     if (this.source === source) this.loadDetails(cx);
     if (this.tab === "workflows") this.selectDefault(cx);
+    this.updateBadge();
   }
 
   mergeRuns(list, cx, replace) {
@@ -388,6 +430,7 @@ export default class Flowdeck extends View {
     };
     await Promise.all([worker(), worker(), worker()]);
     d.version++;
+    this.updateBadge();
     cx.notify();
   }
 
@@ -435,7 +478,7 @@ export default class Flowdeck extends View {
     this.tab = tab;
     this.menu = false;
     this.entered[tab] = false;
-    if (tab === "failures" && this.profile) setShared(SEEN, { ...(shared(SEEN) ?? {}), [this.profile.id]: Date.now() });
+    if (tab === "failures" && this.profile) { setShared(SEEN, { ...(shared(SEEN) ?? {}), [this.profile.id]: Date.now() }); this.updateBadge(); }
     if (tab === "workflows") { this.graph.entered = false; this.selectDefault(cx); }
     cx.timer.after(ENTER_MS, (cx) => { this.entered[tab] = true; this.graph.entered = true; cx.notify(); });
     if (tab === "ask") cx.timer.after(80, () => { try { this.inputs.ask.focus(); } catch {} });
@@ -565,6 +608,7 @@ export default class Flowdeck extends View {
   // ── Drawing ─────────────────────────────────────────────────────────────────────────────────────────────────
 
   render(cx) {
+    if (this.isBar) return this.renderBar();
     const c = colors();
     const inOverlay = Boolean(props()?.overlay);
     if (this.mode === "loading") {

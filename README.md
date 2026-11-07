@@ -29,6 +29,16 @@ herdr-app do tab.new --name n8n --mod flowdeck
 
 For a quick look without a tab, `mod.open:flowdeck` opens it as a large dialog, with a button that pops it out to a tab.
 
+### A button in your header (optional)
+
+Put a small Flowdeck button in any bar of your layout. It goes to your Flowdeck tab, or opens one, and shows a red badge with the number of new failure causes. Add this block to a row, such as the one beside your tabs. Clone a shipped layout first (`herdr-app do layout.clone '{"name":"main","as":"my-layout"}'`), because Herdr's own layouts are read-only:
+
+```json
+{ "id": "flowdeck-bar", "type": "block", "content": { "mod": "flowdeck", "props": { "bar": true } }, "size": { "px": 48 } }
+```
+
+The button syncs nothing itself; it reads the badge that an open Flowdeck tab publishes.
+
 **Before you add it:** Flowdeck reaches the network (only your n8n address). It runs programs: `security` or `secret-tool` for the keychain, `claude` when you ask a question, and `open`/`xdg-open` for links. It reads and writes one private folder, `~/.config/herdr-app/.flowdeck` (mode 700), for a few seconds at a time. [SECURITY.md](SECURITY.md) covers each of these.
 
 ### Keys (optional)
