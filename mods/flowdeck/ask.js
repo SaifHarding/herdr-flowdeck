@@ -6,7 +6,7 @@ import { div } from "gpui-kit";
 import { h_flex, v_flex, Textarea, TextView } from "gpui-base";
 import { shared, setShared } from "herdr";
 import { alpha, icon, button, chip, spinner, rise, mono, card, dot } from "./ui.js";
-import { buildContext, buildPrompt, SYSTEM_PROMPT, lastMentioned, mentionsInOrder, culpritIn, safeMarkdown, answerLinkAllowed } from "./model.js";
+import { buildContext, buildPrompt, SYSTEM_PROMPT, lastMentioned, mentionsInOrder, culpritIn, safeMarkdown, answerLinkAllowed, quotedNeedle, runMentions, runEvidence, running, when } from "./model.js";
 import { MODELS, startAsk, readAsk, cancelAsk, cleanupAsk } from "./claude.js";
 import { graphView, GraphState } from "./graph.js";
 import { randomBytes } from "crypto";
@@ -16,6 +16,7 @@ const MODEL = "flowdeck.ask-model";
 const POLL = 160;
 const MAX_MS = 4 * 60e3;
 const WALK_MS = 700;
+const RUN_SEARCH = 50;
 
 const SUGGEST = {
   all: ["What's failing most this week, and why?", "Which workflows haven't run in the last 7 days?", "Which workflows send messages to Slack or email?", "Summarise what this instance automates, in five bullets."],
@@ -35,7 +36,7 @@ export class AskSession {
   }
 
   get model() { return MODELS.some((m) => m.id === shared(MODEL)) ? shared(MODEL) : "sonnet"; }
-  get busy() { return Boolean(this.job); }
+  get busy() { return Boolean(this.job || this.preparing); }
 
   reset() {
     this.cancel();
@@ -45,6 +46,11 @@ export class AskSession {
   }
 
   async cancel() {
+    // A run search or a pending "send run data?" ends too, answered no.
+    this.preparing = false;
+    const waiting = this.turns[0]?.a;
+    if (waiting?.confirm) { waiting.confirm(false); waiting.stopped = true; }
+    if (waiting?.searching) { waiting.searching = null; waiting.stopped = true; waiting.streaming = false; }
     this.task?.cancel();
     this.task = null;
     this.walk?.cancel();
@@ -73,11 +79,32 @@ export class AskSession {
   }
 
   // Exactly what would be sent for the current scope, for the preview.
-  contextFor(view, scope = this.scope) {
+  contextFor(view, scope = this.scope, extra = {}) {
     const m = view.derived();
     const workflow = scope.kind !== "all" ? m.byId.get(scope.workflowId) : null;
     const failure = scope.kind === "failure" ? m.groups.find((g) => g.latest && String(g.latest.id) === String(scope.runId)) ?? { latest: { id: scope.runId } } : null;
-    return buildContext({ scope: workflow ? "workflow" : "all", workflows: view.data.workflows, stats: m.stats, groups: m.groups, runs: view.data.runs, workflow, failure, instance: view.profile?.name });
+    return buildContext({ scope: workflow ? "workflow" : "all", workflows: view.data.workflows, stats: m.stats, groups: m.groups, runs: view.data.runs, workflow, failure, instance: view.profile?.name, ...extra });
+  }
+
+  // Looks through the newest runs (of the workflow asked about, else of the instance) for one whose data mentions the
+  // quoted text: one run at a time, each read as raw text and dropped, so memory stays flat however big runs are.
+  async findRun(view, scope, needle, a, cx) {
+    const wid = scope.kind !== "all" ? scope.workflowId : null;
+    const list = view.data.executions.filter((e) => (!wid || e.workflowId === wid) && !running(e)).slice(0, RUN_SEARCH);
+    a.searching = { needle, done: 0, total: list.length };
+    cx.notify();
+    const searched = { needle, count: 0, workflow: wid ? view.derived().byId.get(wid)?.name : null };
+    for (const e of list) {
+      if (!this.preparing) break;
+      let text = null;
+      try { text = await view.source.executionText(String(e.id)); } catch {}
+      searched.count++;
+      if (a.searching) a.searching.done = searched.count;
+      cx.notify();
+      if (text && runMentions(text, needle)) { a.searching = null; return { run: e, text, searched }; }
+    }
+    a.searching = null;
+    return { run: null, text: null, searched };
   }
 
   async ask(question, view, cx) {
@@ -99,7 +126,29 @@ export class AskSession {
       return;
     }
     try {
-      const context = this.contextFor(view, scope);
+      // A quoted name or title: find the run that produced it, and share what it did only if the person says yes.
+      const needle = quotedNeedle(question);
+      let evidence = null, searched = null;
+      if (needle && view.source?.executionText) {
+        this.preparing = true;
+        const found = await this.findRun(view, scope, needle, a, cx);
+        searched = found.searched;
+        if (found.run && this.preparing) {
+          a.found = { id: String(found.run.id), startedAt: found.run.startedAt, status: found.run.status, needle };
+          cx.notify();
+          const yes = await new Promise((resolve) => { a.confirm = resolve; });
+          a.confirm = null;
+          a.found.shared = yes;
+          if (yes) evidence = { ...runEvidence(found.text), needle };
+          searched = { ...searched, found: true };
+        }
+        found.text = null;
+        const stopped = !this.preparing;
+        this.preparing = false;
+        if (stopped || a.stopped) { a.streaming = false; a.stopped = true; cx.notify(); return; }
+        a.searched = searched;
+      }
+      const context = this.contextFor(view, scope, { evidence, searched });
       a.chars = context.length;
       const job = await startAsk({ prompt: buildPrompt(context, history, question, randomBytes(6).toString("hex")), system: SYSTEM_PROMPT, model: this.model });
       a.job = job;
@@ -166,7 +215,7 @@ function consentCard(view, c) {
     .child(h_flex().gap(10).items_center().child(icon("shield", 17, c.brand)).child(div().flex_1().min_w(0).text_size(14).font_semibold().child("Before your first question")))
     .child(div().text_size(12.8).text_color(c.foreground).child(`To answer, Flowdeck sends ${what} from ${view.profile?.name ?? "this instance"} to Claude, through your own Claude Code sign-in. You'll be asked again for other instances, and before sending a summary of every workflow.`))
     .child(v_flex().gap(6)
-      .child(h_flex().gap(8).items_start().child(icon("check", 13, c.ok).mt(2)).child(div().flex_1().min_w(0).text_size(12.3).text_color(c.muted).child("Never sent: credentials, pinned data, or the items your runs processed.")))
+      .child(h_flex().gap(8).items_start().child(icon("check", 13, c.ok).mt(2)).child(div().flex_1().min_w(0).text_size(12.3).text_color(c.muted).child("Never sent: credentials or pinned data. What a run processed only goes if you approve it, one question at a time.")))
       .child(h_flex().gap(8).items_start().child(icon("check", 13, c.ok).mt(2)).child(div().flex_1().min_w(0).text_size(12.3).text_color(c.muted).child("Fields named like secrets, and values that look like keys or tokens, are masked first.")))
       .child(h_flex().gap(8).items_start().child(icon("check", 13, c.ok).mt(2)).child(div().flex_1().min_w(0).text_size(12.3).text_color(c.muted).child("Claude runs with every tool switched off: it can read what's sent and write an answer, nothing else."))))
     .child(h_flex().gap(8).pt(2).flex_wrap()
@@ -180,9 +229,39 @@ function consentCard(view, c) {
       .text_size(11).font_family(mono()).text_color(c.muted).child(String(view.asking.preview).slice(0, 20000))));
 }
 
+// The run search's part of an answer: progress, the "send this run's data?" question, and what came of it.
+function runSearch(c, t) {
+  const quote = (n) => `“${n.length > 60 ? `${n.slice(0, 60)}…` : n}”`;
+  if (t.searching) {
+    const { needle, done, total } = t.searching;
+    return h_flex().gap(9).items_center().child(spinner(13, c.run))
+      .child(div().flex_1().min_w(0).text_size(12.3).text_color(c.muted).child(`Searching recent runs for ${quote(needle)} · ${done}/${total}`));
+  }
+  if (t.found && t.confirm) {
+    const f = t.found;
+    return v_flex().id(`found-${t.id}`).p(12).gap(10).rounded(10).bg(alpha(c.run, 0.08)).border(1).border_color(alpha(c.run, 0.4))
+      .child(h_flex().gap(8).items_start().child(icon("search", 13, c.run).mt(2))
+        .child(div().flex_1().min_w(0).text_size(12.5).text_color(c.foreground).child(`Found run #${f.id}, ${when(Date.parse(f.startedAt))}, which mentions ${quote(f.needle)}.`)))
+      .child(div().text_size(12).text_color(c.muted).child("To work out what happened, Claude needs what that run's nodes produced: the first two items each node output, with secrets masked, up to 40 KB. It's sent for this question only."))
+      .child(h_flex().gap(8).flex_wrap()
+        .child(button(c, { id: `share-${t.id}`, label: "Send run data", iconName: "spark", kind: "primary", size: "sm", onClick: (_e, cx) => { t.confirm?.(true); cx.notify(); } }))
+        .child(button(c, { id: `noshare-${t.id}`, label: "Answer without it", size: "sm", onClick: (_e, cx) => { t.confirm?.(false); cx.notify(); } })));
+  }
+  if (t.found) {
+    return h_flex().gap(7).items_center().child(icon(t.found.shared ? "check" : "eye-off", 12, t.found.shared ? c.ok : c.dim))
+      .child(div().text_size(11.5).text_color(c.dim).child(t.found.shared ? `Shared what run #${t.found.id}'s nodes produced` : `Answered without run #${t.found.id}'s data`));
+  }
+  if (t.searched && !t.searched.found) {
+    return h_flex().gap(7).items_center().child(icon("search", 12, c.dim))
+      .child(div().text_size(11.5).text_color(c.dim).child(`No run in the last ${t.searched.count} mentions ${quote(t.searched.needle)}`));
+  }
+  return null;
+}
+
 function answer(c, t, i) {
   const md = t.text || "";
-  const thinking = t.streaming && !md;
+  const search = runSearch(c, t);
+  const thinking = t.streaming && !md && !t.searching && !t.confirm;
   return v_flex().id(`turn-${t.id}`).gap(10).p(16).rounded(14).bg(c.surface).border(1).border_color(t.error ? alpha(c.err, 0.4) : i === 0 && t.streaming ? alpha(c.brand, 0.5) : c.border)
     .map(rise(true, 0, 6))
     .child(h_flex().gap(9).items_center()
@@ -191,6 +270,7 @@ function answer(c, t, i) {
       .child(div().text_size(11).text_color(c.dim).child(`${MODELS.find((m) => m.id === t.model)?.label ?? ""} · ${t.scope}`))
       .child(div().flex_1())
       .when(!t.streaming && t.ms, (e) => e.child(div().text_size(10.8).text_color(c.dim).font_family(mono()).child(`${(t.ms / 1000).toFixed(1)} s${t.cost ? ` · $${t.cost.toFixed(4)}` : ""}`))))
+    .when(Boolean(search), (e) => e.child(search))
     .when(thinking, (e) => e.child(h_flex().gap(8).items_center().h(22)
       .child(div().text_size(12.5).text_color(c.muted).child("Reading your workflows"))
       .child(div().w(24).text_size(12.5).text_color(c.brand).frames(["·", "··", "···", " ··", "  ·", ""], 180).child(""))))
@@ -229,7 +309,7 @@ export function askView(view, c) {
         : button(c, { id: "ask-send", iconName: "send", kind: "primary", tooltip: "Ask (Enter)", onClick: (_e, cx) => view.askCurrent(cx) })))
     .child(h_flex().justify_between().items_center().gap(10)
       .child(h_flex().gap(6).items_center().min_w(0).child(icon("lock", 11, c.dim))
-        .child(div().truncate().text_size(11).text_color(c.dim).child("Sent to Claude through your Claude Code: workflow structure and errors. Never credentials or run data.")))
+        .child(div().truncate().text_size(11).text_color(c.dim).child("Sent to Claude through your Claude Code: workflow structure and errors. Run data only when you approve it.")))
       .child(modelPicker(view, c)));
   const turns = s.turns;
   const focus = claudeFocus(view);
@@ -351,7 +431,7 @@ export function askDock(view, c, w) {
           ? button(c, { id: "dock-stop", iconName: "stop", kind: "solid", size: "sm", tooltip: "Stop", onClick: (_e, cx) => cx.spawn(async (cx) => { await s.cancel(); cx.notify(); }) })
           : button(c, { id: "dock-send", iconName: "send", kind: "primary", size: "sm", tooltip: "Ask (Enter)", onClick: (_e, cx) => view.askCurrent(cx) })))
       .child(h_flex().gap(6).items_center().child(icon("lock", 10, c.dim))
-        .child(div().truncate().text_size(10.5).text_color(c.dim).child("Structure and errors only. Never credentials or run data."))))
+        .child(div().truncate().text_size(10.5).text_color(c.dim).child("Structure and errors. Run data only when you approve it."))))
     .when(Boolean(status), (e) => e.child(status))
     .when(Boolean(s.pending), (e) => e.child(div().px(12).pt(8).child(consentCard(view, c))))
     .child(v_flex().id("dock-scroll").flex_1().min_h(0).overflow_y_scrollbar().p(12).gap(10)

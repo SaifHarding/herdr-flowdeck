@@ -433,6 +433,69 @@ export function leanJson(text, keep) {
   return value([]);
 }
 
+// ── Finding a run by what it produced ──────────────────────────────────────────────────────────────────────────
+
+// The text a question quotes, to look for in runs: "…", “…” or '…', six characters or more.
+export function quotedNeedle(question) {
+  const m = String(question ?? "").match(/"([^"\n]{6,200})"|“([^”\n]{6,200})”|‘([^’\n]{6,200})’/);
+  return m ? (m[1] ?? m[2] ?? m[3]).trim() : null;
+}
+
+// Whether a run's raw JSON mentions the text: compared as JSON would write it, case-insensitively, without parsing.
+export function runMentions(text, needle) {
+  const exact = JSON.stringify(String(needle)).slice(1, -1);
+  if (exact.length < 6) return false;
+  const t = String(text);
+  return t.includes(exact) || t.toLowerCase().includes(exact.toLowerCase());
+}
+
+// What each node produced in one run, for Claude, once the person has said yes: its status and timing, and the first
+// two items of each output, redacted and cut. Built lean from the raw text: later items and binary data never become
+// objects.
+const EV_RUN = new Set(["startTime", "executionTime", "executionStatus", "error", "data"]);
+function evidenceKeep(path) {
+  const n = path.length, k = path[n - 1];
+  if (n === 1) return ["id", "startedAt", "status", "data"].includes(k);
+  if (path[0] !== "data") return false;
+  if (n === 2) return k === "resultData";
+  if (path[1] !== "resultData") return false;
+  if (n === 3) return k === "runData" || k === "error" || k === "lastNodeExecuted";
+  if (path[2] === "error") return n <= 5;
+  if (path[2] !== "runData") return false;
+  if (n <= 5) return true;
+  if (n === 6) return EV_RUN.has(k);
+  if (path[5] === "error") return n === 7 && ["message", "description", "name", "httpCode"].includes(k);
+  if (path[5] !== "data") return false;
+  if (n === 7) return k === "main";
+  if (n === 8) return Number(k) < 4;
+  if (n === 9) return Number(k) < 2;
+  if (n === 10) return k === "json";
+  return n <= 22;
+}
+
+export function runEvidence(text, cap = 40000) {
+  const run = leanJson(text, evidenceKeep);
+  const rd = run?.data?.resultData ?? {};
+  const order = Object.entries(rd.runData ?? {})
+    .map(([name, runs]) => [name, runs?.[runs.length - 1] ?? {}])
+    .sort((a, b) => (a[1].startTime ?? 0) - (b[1].startTime ?? 0));
+  const lines = [];
+  for (const [name, r] of order) {
+    const status = r.error ? "error" : r.executionStatus ?? "success";
+    lines.push(`### "${name}": ${status}${r.executionTime != null ? `, ${r.executionTime} ms` : ""}`);
+    if (r.error) lines.push(`Error: ${scrubText(r.error.message ?? "", 600)}${r.error.description ? ` (${scrubText(r.error.description, 600)})` : ""}`);
+    const outs = Array.isArray(r.data?.main) ? r.data.main : [];
+    outs.forEach((items, o) => {
+      const list = (Array.isArray(items) ? items : []).filter(Boolean);
+      if (!list.length) { lines.push(outs.length > 1 ? `Output ${o}: no items` : "No items out"); return; }
+      list.slice(0, 2).forEach((it, k) => lines.push(`${outs.length > 1 ? `Output ${o} item ${k + 1}` : `Item ${k + 1}`}: ${JSON.stringify(redact(it?.json ?? {})).slice(0, 1500)}`));
+    });
+  }
+  let out = lines.join("\n");
+  if (out.length > cap) out = `${out.slice(0, cap)}\n[Cut at ${cap} characters.]`;
+  return { id: String(run?.id ?? ""), startedAt: run?.startedAt ?? null, status: run?.status ?? null, nodes: order.length, text: out };
+}
+
 // Strips run-specific numbers and ids from an error so the same fault groups together across runs.
 export function signature(message = "") {
   return String(message).toLowerCase()
@@ -621,8 +684,11 @@ export function describeRun(run, workflowName) {
 
 // Everything Claude is told, as one document. Scope decides how much: the whole instance in outline, or one workflow
 // (and one failure) in full. The total is capped so a huge instance can't blow up a question.
-export function buildContext({ scope, workflows, stats, groups, runs, workflow, failure, instance }, cap = 120000) {
+export function buildContext({ scope, workflows, stats, groups, runs, workflow, failure, instance, evidence, searched }, cap = 120000) {
   const parts = [`# n8n instance ${instance ?? ""}`.trim(), `Now: ${new Date().toISOString()}.`];
+  // A run found by what it produced, shared because the person said yes for this question.
+  if (evidence) parts.push(`## Run ${evidence.id} (${evidence.status ?? "?"}, started ${evidence.startedAt}), found because it mentions "${evidence.needle}". What each node produced: the first items of each output, redacted. This is the person's own data, shared for this question.\n${evidence.text}`);
+  else if (searched) parts.push(`## Run search\nFlowdeck searched the last ${searched.count} runs${searched.workflow ? ` of "${searched.workflow}"` : ""} for "${searched.needle}"${searched.found ? ", found one, and the person chose not to share its data" : " and none mentions it"}.`);
   const failing = (groups ?? []).slice(0, 25).map((g) => `- "${g.workflow}"${g.node ? ` at node "${g.node}"` : ""}: ${g.count} failure(s) in 7 days, last at ${g.latest?.startedAt}${g.message ? `: ${g.message}` : ""}`);
   if (scope === "workflow" && workflow) {
     parts.push(describeWorkflow(workflow, stats?.get(workflow.id)));

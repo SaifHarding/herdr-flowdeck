@@ -102,6 +102,12 @@ export class RestSource {
     // Read lean: the items in a big run never become objects (see leanExecution).
     return getJson(this.base, `/api/v1/executions/${encodeURIComponent(id)}?includeData=true`, this.headers, { parse: leanExecution, max: MAX_EXECUTION });
   }
+
+  // A run's raw JSON, unparsed, to search for text and to pull evidence from lean.
+  async executionText(id) {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(String(id))) throw new N8nError("Bad execution id", "server");
+    return getJson(this.base, `/api/v1/executions/${encodeURIComponent(id)}?includeData=true`, this.headers, { parse: (t) => t, max: MAX_EXECUTION });
+  }
 }
 
 // ── Demo ──────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -118,6 +124,7 @@ export class DemoSource {
   async executions() { return this.inst.executions.filter((e) => startOf(e) <= Date.now()); }
   async recent() { return (await this.executions()).slice(0, 100); }
   async execution(id) { return demoExecution(this.inst, id); }
+  async executionText(id) { return JSON.stringify(demoExecution(this.inst, id)); }
 }
 
 export function sourceFor(profile, secret) {

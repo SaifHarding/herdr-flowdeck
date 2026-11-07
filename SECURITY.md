@@ -37,6 +37,7 @@ Flowdeck handles a credential that can read everything in an n8n instance. This 
 
 - **In memory only**, in the pane's process, and dropped when you switch instance or close the pane.
 - **Run payloads aren't kept.** From an execution's details, Flowdeck keeps the error message, the description, the failing node and the order nodes ran in. The items that flowed through the run are dropped as soon as the response is read.
+- **Searching runs for quoted text.** When a question quotes something (`"…"`), Flowdeck reads the newest runs one at a time, up to 50 (of the workflow asked about, else of the instance), as raw text. It checks each for the quote and drops it. Nothing from them is kept or sent.
 - **n8n's data is drawn as text.** Names, errors and parameters are native text, never HTML or markdown.
 - **Claude's answers are drawn as markdown, made safe first.** Images, raw HTML tags and link reference definitions are removed before an answer is rendered, outside code blocks. That's because an image would load without a click, which would make it a silent way to send data out. Links in an answer open only if they point at your instance's workflow or execution pages, or at docs.n8n.io. Webhook and form URLs, which a click would run, don't open.
 
@@ -46,7 +47,8 @@ Flowdeck handles a credential that can read everything in an n8n instance. This 
 - **What's sent.**
   - For "All workflows": names, node types, triggers, run and failure counts, and recent error messages.
   - For one workflow: its nodes, their parameters and connections, and its recent errors.
-- **What's never sent.** Credentials (Flowdeck sends only the credential *type* name), pinned data, and execution items.
+- **What's never sent.** Credentials (Flowdeck sends only the credential *type* name) and pinned data.
+- **Run data, only when you say yes, one question at a time.** If a search finds the run a question is about, the answer card asks before anything from it is sent: "Send run data" or "Answer without it". On yes, Claude gets each node's status and timing, plus the first two items of each node's output, masked like everything else and capped at 40 KB. Nothing else from the run goes, and the yes isn't remembered.
 - **What's masked.** Before anything leaves, `redact()` replaces with `[redacted]`:
   - everything under a key named like a secret, whatever its shape (password, token, key, apiKey, auth…, secret, cookie, signature, private key, session, subscription, dsn, webhookUrl…)
   - `{ name, value }` header and query pairs with such names

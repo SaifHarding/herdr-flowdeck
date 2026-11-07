@@ -341,3 +341,26 @@ test("hints don't mistake byte counts for status codes, and name a Code node's o
   assert.equal(hint({ message: "Request failed with status code 502" }).tone, "server");
   assert.equal(hint({ message: "Processed 500 items" }), null);
 });
+
+test("a quoted title finds its run, and only the first items of each node are shared, redacted", async () => {
+  const { quotedNeedle, runMentions, runEvidence, buildContext } = await import("../mods/flowdeck/model.js");
+  assert.equal(quotedNeedle('article "Weekly Billing Digest for Acme Corp" generated a blank article'), "Weekly Billing Digest for Acme Corp");
+  assert.equal(quotedNeedle("why did it fail?"), null);
+  const items = Array.from({ length: 500 }, (_, k) => ({ json: { title: k === 0 ? "Weekly Billing Digest for Acme Corp" : `x${k}`, token: "sk_live_abcdefghijklmnop1234", body: "z".repeat(200) } }));
+  const raw = JSON.stringify({ id: "72301", status: "success", startedAt: "2026-11-06T17:53:00Z", data: { resultData: { runData: {
+    "Parse ChatGPT Response": [{ startTime: 1, executionTime: 12, executionStatus: "success", data: { main: [items] } }],
+    "Apply Page Formatting": [{ startTime: 2, executionTime: 900, executionStatus: "success", data: { main: [[]] } }],
+  } } } });
+  assert.ok(runMentions(raw, "weekly billing digest for acme corp"), "case-insensitive");
+  assert.ok(!runMentions(raw, "Something else entirely"));
+  const ev = runEvidence(raw);
+  assert.equal(ev.id, "72301");
+  assert.equal(ev.nodes, 2);
+  assert.ok(ev.text.includes("Weekly Billing Digest") && ev.text.includes("x1") && !ev.text.includes("x2\""), "first two items only");
+  assert.ok(!ev.text.includes("sk_live_abcdefghijklmnop1234"), "secrets masked");
+  assert.ok(ev.text.includes('"Apply Page Formatting": success, 900 ms') && ev.text.includes("No items out"));
+  const ctx = buildContext({ scope: "all", workflows: [], evidence: { ...ev, needle: "Diagnose" } });
+  assert.ok(ctx.includes("found because it mentions"));
+  const none = buildContext({ scope: "all", workflows: [], searched: { needle: "Q", count: 50, workflow: "W" } });
+  assert.ok(none.includes("none mentions it"));
+});
