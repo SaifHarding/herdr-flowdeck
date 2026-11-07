@@ -603,6 +603,10 @@ export default class Flowdeck extends View {
 
   // ── Asking ──────────────────────────────────────────────────────────────────────────────────────────────────
 
+  lookFurther(t, mode, cx) {
+    cx.spawn(async (cx) => this.asking.lookFurther(this, t, mode, cx));
+  }
+
   askCurrent(cx) {
     const q = this.inputs.ask.value().trim();
     if (!q) return;

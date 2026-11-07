@@ -91,12 +91,12 @@ export class AskSession {
   // Looks through the newest runs (of the workflow asked about, else of the instance) for the quoted text and ranks
   // every match (mentionScore), so a run that only lists the title loses to the one that made it. One run is read at
   // a time, as raw text, and dropped: only ids and scores are kept, and the chosen run is read again on a yes.
-  async findRun(view, scope, needle, a, cx) {
+  async findRun(view, scope, needle, a, cx, exclude = null) {
     const wid = scope.kind !== "all" ? scope.workflowId : null;
-    const list = view.data.executions.filter((e) => (!wid || e.workflowId === wid) && !running(e)).slice(0, RUN_SEARCH);
+    const list = view.data.executions.filter((e) => (!wid || e.workflowId === wid) && e.workflowId !== exclude && !running(e)).slice(0, RUN_SEARCH);
     a.searching = { needle, done: 0, total: list.length, hits: 0 };
     cx.notify();
-    const searched = { needle, count: 0, workflow: wid ? view.derived().byId.get(wid)?.name : null };
+    const searched = { needle, count: 0, workflow: wid ? view.derived().byId.get(wid)?.name : exclude ? "other workflows" : null };
     const hits = [];
     for (const e of list) {
       if (!this.preparing) break;
@@ -105,7 +105,7 @@ export class AskSession {
       searched.count++;
       const score = text ? mentionScore(text, needle) : 0;
       text = null;
-      if (score) hits.push({ id: String(e.id), startedAt: e.startedAt, status: e.status, score });
+      if (score) hits.push({ id: String(e.id), startedAt: e.startedAt, status: e.status, score, workflowId: e.workflowId });
       if (a.searching) { a.searching.done = searched.count; a.searching.hits = hits.length; }
       cx.notify();
     }
@@ -114,7 +114,35 @@ export class AskSession {
     return { hits: hits.slice(0, 4), searched };
   }
 
-  async ask(question, view, cx) {
+  // Look further from an answer that used a run: the run before or after it in the same workflow, or runs of other
+  // workflows that mention the same text. Each starts a follow-up that asks before sending, like any run.
+  lookFurther(view, t, mode, cx) {
+    if (this.busy || !t) return;
+    const base = t.found, needle = base?.needle ?? t.searched?.needle ?? null;
+    const byId = view.derived().byId;
+    if ((mode === "prev" || mode === "next") && base) {
+      const runs = view.data.executions.filter((e) => e.workflowId === base.workflowId && !running(e)).sort((x, y) => Date.parse(x.startedAt) - Date.parse(y.startedAt));
+      const i = runs.findIndex((e) => String(e.id) === String(base.id));
+      const pick = i < 0 ? null : runs[i + (mode === "next" ? 1 : -1)];
+      if (!pick) { t.lookNote = mode === "next" ? "That's the newest run." : "There's no earlier run in the last 7 days."; cx.notify(); return; }
+      const reason = `${mode === "prev" ? "the run before" : "the run after"} #${base.id}`;
+      const wf = byId.get(pick.workflowId)?.name;
+      this.ask(`Look further: ${reason} (#${pick.id})`, view, cx, {
+        needle,
+        hits: [{ id: String(pick.id), startedAt: pick.startedAt, status: pick.status, score: 0, workflowId: pick.workflowId, reason }],
+        prompt: `Look further at run #${pick.id}, ${reason}${wf ? ` in "${wf}"` : ""}. Compare it with what you found before: does it show the same problem, or does it explain what happened?`,
+      });
+    } else if (mode === "elsewhere" && needle) {
+      this.ask(`Look further: other workflows' runs that mention “${needle}”`, view, cx, {
+        needle, elsewhere: true, excludeWorkflow: base?.workflowId ?? (this.scope.kind !== "all" ? this.scope.workflowId : null),
+        prompt: `Look further: this is a run from another workflow that also mentions "${needle}". What does it add to what you found before?`,
+      });
+    }
+  }
+
+  // `opts`: `prompt`, the question as Claude gets it (default: as shown); `hits`, runs already chosen (Look further's
+  // run before/after), skipping the search; `elsewhere` + `excludeWorkflow`, search other workflows' runs instead.
+  async ask(question, view, cx, opts = {}) {
     if (this.busy) return;
     if (!this.consented(view)) { this.pending = question; this.preview = null; cx.notify(); return; }
     this.pending = null;
@@ -134,23 +162,27 @@ export class AskSession {
     }
     try {
       // A quoted name or title: find the run that produced it, and share what it did only if the person says yes.
-      const needle = quotedNeedle(question);
+      const needle = opts.needle ?? quotedNeedle(question);
       let evidence = null, searched = null;
-      if (needle && view.source?.executionText) {
+      if ((needle || opts.hits) && view.source?.executionText) {
         this.preparing = true;
-        const found = await this.findRun(view, scope, needle, a, cx);
+        const found = opts.hits
+          ? { hits: opts.hits, searched: null }
+          : await this.findRun(view, opts.elsewhere ? { kind: "all" } : scope, needle, a, cx, opts.excludeWorkflow);
         searched = found.searched;
         if (found.hits.length && this.preparing) {
-          a.candidates = found.hits;
-          a.found = { ...found.hits[0], needle };
+          const named = (h) => ({ ...h, workflowName: opts.elsewhere ? view.derived().byId.get(h.workflowId)?.name ?? null : null });
+          a.candidates = found.hits.map(named);
+          a.found = { ...a.candidates[0], needle, picked: Boolean(opts.hits) };
           cx.notify();
           const yes = await new Promise((resolve) => { a.confirm = resolve; });
           a.confirm = null;
           a.found.shared = yes;
           if (yes) {
-            try { evidence = { ...runEvidence(await view.source.executionText(a.found.id)), needle }; } catch { a.found.shared = false; }
+            const wf = view.derived().byId.get(a.found.workflowId);
+            try { evidence = { ...runEvidence(await view.source.executionText(a.found.id)), needle, workflow: wf?.name ?? null, reason: a.found.reason ?? null }; } catch { a.found.shared = false; }
           }
-          searched = { ...searched, found: true };
+          if (searched) searched = { ...searched, found: true };
         }
         const stopped = !this.preparing;
         this.preparing = false;
@@ -159,7 +191,7 @@ export class AskSession {
       }
       const context = this.contextFor(view, scope, { evidence, searched });
       a.chars = context.length;
-      const job = await startAsk({ prompt: buildPrompt(context, history, question, randomBytes(6).toString("hex")), system: SYSTEM_PROMPT, model: this.model });
+      const job = await startAsk({ prompt: buildPrompt(context, history, opts.prompt ?? question, randomBytes(6).toString("hex")), system: SYSTEM_PROMPT, model: this.model });
       a.job = job;
       this.job = job;
       a.floStep = 0;
@@ -275,7 +307,9 @@ function runSearch(c, t) {
     const f = t.found;
     return v_flex().id(`found-${t.id}`).p(12).gap(10).rounded(10).bg(alpha(c.run, 0.08)).border(1).border_color(alpha(c.run, 0.4))
       .child(h_flex().gap(8).items_start().child(icon("search", 13, c.run).mt(2))
-        .child(div().flex_1().min_w(0).text_size(12.5).text_color(c.foreground).child(`Best match: run #${f.id}, ${when(Date.parse(f.startedAt))}, which mentions ${quote(f.needle)}${f.score > 1 ? ` (${f.score >= 5 ? "as a field value" : `${f.score} times`})` : ""}.`)))
+        .child(div().flex_1().min_w(0).text_size(12.5).text_color(c.foreground).child(f.picked
+          ? `Run #${f.id}, ${when(Date.parse(f.startedAt))}: ${f.reason}.`
+          : `Best match: run #${f.id}${f.workflowName ? ` in ${f.workflowName}` : ""}, ${when(Date.parse(f.startedAt))}, which mentions ${quote(f.needle)}${f.score > 1 ? ` (${f.score >= 5 ? "as a field value" : `${f.score} times`})` : ""}.`)))
       .when((t.candidates ?? []).length > 1, (e) => e.child(h_flex().gap(6).items_center().flex_wrap()
         .child(div().text_size(11.5).text_color(c.dim).child("Or pick another run that mentions it:"))
         .children(t.candidates.map((cand) => chip(c, { id: `cand-${t.id}-${cand.id}`, label: `#${cand.id} · ${when(Date.parse(cand.startedAt))}`, active: cand.id === f.id,
@@ -294,6 +328,26 @@ function runSearch(c, t) {
       .child(div().text_size(11.5).text_color(c.dim).child(`No run in the last ${t.searched.count} mentions ${quote(t.searched.needle)}`));
   }
   return null;
+}
+
+// Look further, under an answer that used a run (or searched for one): the run before, the run after, or the same
+// text in other workflows.
+let lookHandler = () => {};
+function lookRow(c, t) {
+  if (t.streaming || t.error || (!t.found && !t.searched)) return null;
+  const needle = t.found?.needle ?? t.searched?.needle;
+  const opt = (mode, label, iconName, show) => (show ? chip(c, { id: `look-${mode}-${t.id}`, label, iconName, active: false, onClick: (_e, cx) => lookHandler(t, mode, cx) }) : null);
+  const chips = [
+    opt("prev", "← Run before", null, Boolean(t.found)),
+    opt("next", "Run after →", null, Boolean(t.found)),
+    opt("elsewhere", "Other workflows", "flow", Boolean(needle)),
+  ].filter(Boolean);
+  if (!chips.length) return null;
+  return v_flex().gap(6).pt(4).border_t(1).border_color(c.border)
+    .child(h_flex().gap(6).items_center().flex_wrap()
+      .child(div().text_size(11.5).font_medium().text_color(c.muted).mr(2).child("Look further:"))
+      .children(chips))
+    .when(Boolean(t.lookNote), (e) => e.child(div().text_size(11.3).text_color(c.dim).child(t.lookNote)));
 }
 
 function answer(c, t, i) {
@@ -317,7 +371,8 @@ function answer(c, t, i) {
     .when(Boolean(parts.rest), (e) => e.child(TextView.markdown(`md-${t.id}`, safeMarkdown(t.streaming ? `${parts.rest} ▍` : parts.rest)).selectable(true).text_size(13).text_color(c.foreground)
       .on_link_click((url) => openSafe(url))))
     .when(Boolean(t.error), (e) => e.child(h_flex().gap(8).items_start().child(icon("alert", 13, c.err)).child(div().flex_1().text_size(12.5).text_color(c.err).child(t.error))))
-    .when(Boolean(t.stopped), (e) => e.child(div().text_size(11.5).text_color(c.dim).child("Stopped.")));
+    .when(Boolean(t.stopped), (e) => e.child(div().text_size(11.5).text_color(c.dim).child("Stopped.")))
+    .map((e) => { const row = lookRow(c, t); return row ? e.child(row) : e; });
 }
 
 const question = (c, t) => h_flex().id(`turn-${t.id}`).justify_end().child(div().max_w("80%").px(14).py(9).rounded(14).bg(alpha(c.brand, 0.14)).border(1).border_color(alpha(c.brand, 0.3))
@@ -336,6 +391,7 @@ const makeOpenSafe = (view) => (url) => {
 
 export function askView(view, c) {
   openSafe = makeOpenSafe(view);
+  lookHandler = (t, mode, cx) => view.lookFurther(t, mode, cx);
   const s = view.asking, en = Boolean(view.entered.ask);
   const busy = s.busy;
   const sug = SUGGEST[s.scope.kind] ?? SUGGEST.all;
@@ -445,6 +501,7 @@ function focusPanel(view, c, f, width) {
 // a strip here names the likely cause, and clicking it opens that node.
 export function askDock(view, c, w) {
   openSafe = makeOpenSafe(view);
+  lookHandler = (t, mode, cx) => view.lookFurther(t, mode, cx);
   const s = view.asking, busy = s.busy;
   const f = claudeFocus(view, w.id);
   const mine = s.scope.kind !== "all" && s.scope.workflowId === w.id;

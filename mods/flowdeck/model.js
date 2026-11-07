@@ -706,7 +706,7 @@ export function describeRun(run, workflowName) {
 export function buildContext({ scope, workflows, stats, groups, runs, workflow, failure, instance, evidence, searched }, cap = 120000) {
   const parts = [`# n8n instance ${instance ?? ""}`.trim(), `Now: ${new Date().toISOString()}.`];
   // A run found by what it produced, shared because the person said yes for this question.
-  if (evidence) parts.push(`## Run ${evidence.id} (${evidence.status ?? "?"}, started ${evidence.startedAt}), found because it mentions "${evidence.needle}". What each node produced: the first items of each output, redacted. This is the person's own data, shared for this question.\n${evidence.text}`);
+  if (evidence) parts.push(`## Run ${evidence.id}${evidence.workflow ? ` of "${evidence.workflow}"` : ""} (${evidence.status ?? "?"}, started ${evidence.startedAt}), ${evidence.reason ? `chosen by the person: ${evidence.reason}` : `found because it mentions "${evidence.needle}"`}. What each node produced: the first items of each output, redacted. This is the person's own data, shared for this question.\n${evidence.text}`);
   else if (searched) parts.push(`## Run search\nFlowdeck searched the last ${searched.count} runs${searched.workflow ? ` of "${searched.workflow}"` : ""} for "${searched.needle}"${searched.found ? ", found one, and the person chose not to share its data" : " and none mentions it"}.`);
   const failing = (groups ?? []).slice(0, 25).map((g) => `- "${g.workflow}"${g.node ? ` at node "${g.node}"` : ""}: ${g.count} failure(s) in 7 days, last at ${g.latest?.startedAt}${g.message ? `: ${g.message}` : ""}`);
   if (scope === "workflow" && workflow) {
