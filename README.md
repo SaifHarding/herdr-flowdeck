@@ -62,7 +62,7 @@ Full details: [SECURITY.md](SECURITY.md).
 
 ## Requirements
 
-- Herdr 0.1.12 or newer.
+- Herdr 0.1.13 (the version it was built and tested on).
 - For Ask Claude: [Claude Code](https://claude.com/claude-code), signed in once with `claude`. Everything else works without it.
 - On Linux, `secret-tool` (package `libsecret-tools`) to remember keys.
 
