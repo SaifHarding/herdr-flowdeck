@@ -404,3 +404,9 @@ test("a node that n8n counted a success but whose output failed is flagged, and 
   assert.deepEqual(silentProblems({ success: true, data: { ok: true } }), []);
   assert.equal(silentProblems({ response: { statusCode: 503 } })[0], "response.statusCode: 503");
 });
+
+test("answers' run mentions are picked out for the Open row", async () => {
+  const { runsMentioned } = await import("../mods/flowdeck/model.js");
+  assert.deepEqual(runsMentioned("The run is execution 72283 of the workflow. Run #72301 is the wrong one; execution #72283 again; 409 error."), ["72283", "72301"]);
+  assert.deepEqual(runsMentioned("No runs here, just 2026 and HTTP 409."), []);
+});

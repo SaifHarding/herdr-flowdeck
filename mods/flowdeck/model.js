@@ -887,6 +887,13 @@ export function answerLinkAllowed(url, base) {
   return /^\/workflow\/[A-Za-z0-9_-]{1,64}(\/executions(\/[A-Za-z0-9_-]{1,64})?)?\/?$/.test(rest) || /^\/home\/(workflows|executions)\/?$/.test(rest) ? "instance" : null;
 }
 
+// Run ids an answer names: "run 72283", "execution #72283", "runs 72283".
+export function runsMentioned(text) {
+  const ids = [];
+  for (const m of String(text ?? "").matchAll(/\b(?:run|execution|exec)s?\s*(?:id\s*)?#?\s*(\d{3,12})\b/gi)) if (!ids.includes(m[1])) ids.push(m[1]);
+  return ids;
+}
+
 // ── Words ─────────────────────────────────────────────────────────────────────────────────────────────────────
 
 export function ago(ms, now = Date.now()) {

@@ -6,10 +6,11 @@ import { div, PathBuilder, Background } from "gpui-kit";
 import { h_flex, v_flex, Textarea, TextView } from "gpui-base";
 import { shared, setShared } from "herdr";
 import { alpha, icon, button, chip, spinner, rise, mono, card, dot } from "./ui.js";
-import { buildContext, buildPrompt, SYSTEM_PROMPT, lastMentioned, mentionsInOrder, culpritIn, safeMarkdown, answerLinkAllowed, findNeedle, mentionScore, runEvidence, running, when, splitSummary } from "./model.js";
+import { runsMentioned, buildContext, buildPrompt, SYSTEM_PROMPT, lastMentioned, mentionsInOrder, culpritIn, safeMarkdown, answerLinkAllowed, findNeedle, mentionScore, runEvidence, running, when, splitSummary } from "./model.js";
 import { MODELS, startAsk, readAsk, cancelAsk, cleanupAsk } from "./claude.js";
 import { graphView, GraphState } from "./graph.js";
 import { randomBytes } from "crypto";
+import { links } from "./n8n.js";
 
 const CONSENT = "flowdeck.ask-consent";
 const MODEL = "flowdeck.ask-model";
@@ -140,7 +141,7 @@ export class AskSession {
     const id = ++this.seq;
     const scope = { ...this.scope };
     const q = { id: `q${id}`, role: "user", text: question, scope: scope.label };
-    const a = { id: `a${id}`, role: "assistant", text: "", streaming: true, scope: scope.label, model: this.model, started: Date.now(), question };
+    const a = { id: `a${id}`, role: "assistant", text: "", streaming: true, scope: scope.label, model: this.model, started: Date.now(), question, workflowId: scope.kind !== "all" ? scope.workflowId : null };
     // Turns are question/answer pairs, newest first; Claude is given them oldest first.
     const history = this.turns.slice().reverse().flatMap((p) => [p.q, p.a]).filter((t) => !t.error && t.text);
     this.turns.unshift({ q, a });
@@ -326,6 +327,39 @@ function runSearch(c, t) {
 // text in other workflows.
 let lookHandler = () => {};
 let searchStopper = () => {};
+// Open, under an answer: the workflow it's about and every run it used or names ("run 72283", "execution #72283"),
+// each opened in Flowdeck's graph (a run laid over it), with ↗ to open the same in n8n.
+let openHandler = null;
+const openHandlerFor = (view) => ({
+  workflow: (id) => view.derived().byId.get(id) ?? null,
+  run: (id) => view.data.executions.find((e) => String(e.id) === String(id)) ?? null,
+  showWorkflow: (wid, runId, cx) => view.showWorkflow(wid, cx, runId ? { runId } : {}),
+  n8nWorkflow: (wid) => view.openLink(links.workflow(view.profile?.base, wid)),
+  n8nRun: (wid, id) => view.openLink(links.execution(view.profile?.base, wid, id)),
+  canOpenN8n: view.profile?.mode !== "demo",
+});
+
+function openRow(c, t) {
+  if (t.streaming || t.error || !openHandler) return null;
+  const runIds = [...new Set([t.found?.id, ...runsMentioned(t.text)].filter(Boolean).map(String))];
+  const runs = runIds.map((id) => openHandler.run(id)).filter(Boolean).slice(0, 4);
+  const wid = t.found?.workflowId ?? runs[0]?.workflowId ?? t.workflowId;
+  const w = wid ? openHandler.workflow(wid) : null;
+  if (!w && !runs.length) return null;
+  const n8n = openHandler.canOpenN8n;
+  const ext = (id, tip, fn) => h_flex().id(id).size(24).flex_none().items_center().justify_center().rounded(6).cursor_pointer()
+    .hover((s) => s.bg(c.hover)).tooltip(tip).on_click((_e, cx) => fn(cx)).child(icon("external", 11, c.dim));
+  const pair = (id, label, iconName, open, inN8n, tip) => h_flex().gap(1).items_center()
+    .child(chip(c, { id, label, iconName, active: false, onClick: (_e, cx) => open(cx) }))
+    .when(n8n, (e) => e.child(ext(`${id}-n8n`, tip, inN8n)));
+  return h_flex().gap(6).items_center().flex_wrap().pt(4).border_t(1).border_color(c.border)
+    .child(div().text_size(11.5).font_medium().text_color(c.muted).mr(2).child("Open:"))
+    .when(Boolean(w), (e) => e.child(pair(`open-wf-${t.id}`, w.name.length > 34 ? `${w.name.slice(0, 33)}…` : w.name, "flow",
+      (cx) => openHandler.showWorkflow(w.id, null, cx), () => openHandler.n8nWorkflow(w.id), "Open the workflow in n8n")))
+    .children(runs.map((r) => pair(`open-run-${t.id}-${r.id}`, `Run #${r.id}${r.status === "error" ? " ✕" : ""}`, null,
+      (cx) => openHandler.showWorkflow(r.workflowId, String(r.id), cx), () => openHandler.n8nRun(r.workflowId, r.id), "Open the run in n8n")));
+}
+
 function lookRow(c, t) {
   if (t.streaming || t.error || (!t.found && !t.searched)) return null;
   const needle = t.found?.needle ?? t.searched?.needle;
@@ -365,6 +399,7 @@ function answer(c, t, i) {
       .on_link_click((url) => openSafe(url))))
     .when(Boolean(t.error), (e) => e.child(h_flex().gap(8).items_start().child(icon("alert", 13, c.err)).child(div().flex_1().text_size(12.5).text_color(c.err).child(t.error))))
     .when(Boolean(t.stopped), (e) => e.child(div().text_size(11.5).text_color(c.dim).child("Stopped.")))
+    .map((e) => { const row = openRow(c, t); return row ? e.child(row) : e; })
     .map((e) => { const row = lookRow(c, t); return row ? e.child(row) : e; });
 }
 
@@ -385,6 +420,7 @@ const makeOpenSafe = (view) => (url) => {
 export function askView(view, c) {
   openSafe = makeOpenSafe(view);
   lookHandler = (t, mode, cx) => view.lookFurther(t, mode, cx);
+  openHandler = openHandlerFor(view);
   searchStopper = () => { view.asking.stopSearch = true; };
   const s = view.asking, en = Boolean(view.entered.ask);
   const busy = s.busy;
@@ -496,6 +532,7 @@ function focusPanel(view, c, f, width) {
 export function askDock(view, c, w) {
   openSafe = makeOpenSafe(view);
   lookHandler = (t, mode, cx) => view.lookFurther(t, mode, cx);
+  openHandler = openHandlerFor(view);
   searchStopper = () => { view.asking.stopSearch = true; };
   const s = view.asking, busy = s.busy;
   const f = claudeFocus(view, w.id);
