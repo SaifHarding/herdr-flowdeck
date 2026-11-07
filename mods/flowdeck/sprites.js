@@ -1,4 +1,6 @@
-// The focus sprites from the sprite preview, drawn natively in the graph's layer so they follow pan and zoom:
+// The focus sprites, drawn natively in the graph's layer so they follow pan and zoom. The Probe, Goose and Brackets
+// sprites and their animation are by Adam Entwistle (https://github.com/adamentwistle), ported here from his preview.
+//
 //
 //   probe     a drone hovers over the node and scans it; its eye follows the scan line; it flies along the wire with
 //             its thrusters lit. The default.
@@ -25,6 +27,7 @@ export const SPRITES = [
   { id: "off", label: "Off", note: "No sprite" },
 ];
 export const SPRITE_KEY = "flowdeck.sprite";
+export const SPRITE_CREDIT = { name: "Adam Entwistle", url: "https://github.com/adamentwistle" };
 export const spriteKind = () => (SPRITES.some((s) => s.id === shared(SPRITE_KEY)) ? shared(SPRITE_KEY) : "probe");
 
 // Set by the view each render: whether motion is reduced (the person's choice, else the system's).

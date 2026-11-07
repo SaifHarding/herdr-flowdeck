@@ -377,6 +377,7 @@ test("the run that made the article beats one that only lists it; answers split 
   assert.ok(s.rest.startsWith("**Append Notion Update**"));
   assert.equal(splitSummary("**TL;DR:** Short.\nMore").summary, "Short.");
   assert.equal(splitSummary("No summary here.").summary, null);
+  assert.equal(splitSummary("**TL;DR: Enrich company** fails because its key expired.\nMore").summary, "Enrich company fails because its key expired.");
 });
 
 test("unquoted questions still find what to search for", async () => {

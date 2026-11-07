@@ -522,7 +522,8 @@ export function mentionScore(text, needle) {
 export function splitSummary(md) {
   const m = String(md ?? "").match(/^\s*\**\s*TL;?DR\s*:?\s*\**\s*:?\s*([^\n]*)\n?/i);
   if (!m) return { summary: null, rest: String(md ?? "") };
-  return { summary: m[1].replace(/\*\*$/, "").trim(), rest: String(md).slice(m[0].length).replace(/^\s+/, "") };
+  // The card shows plain text, so bold markers go (the model often bolds the whole TL;DR line, opening before the label).
+  return { summary: m[1].replace(/\*\*|__/g, "").trim(), rest: String(md).slice(m[0].length).replace(/^\s+/, "") };
 }
 
 // What each node produced in one run, for Claude, once the person has said yes: its status and timing, and the first

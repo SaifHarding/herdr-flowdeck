@@ -34,7 +34,7 @@ The mod fills its pane (a tab: `tab.new {name: "n8n", mod: "flowdeck"}`). Every 
 - On the right: "Synced 12s ago", a refresh button (it spins while syncing), and a gear button that opens the menu.
 - Below 980 px wide, the tabs show icons only.
 
-**Instance menu** (310 px popover, top right): the instances with their address, mode and key tail (✓ on the current one), the demo instance, "Connect another instance", a read-only note, where the key is kept, and "Disconnect and forget key" in red.
+**Instance menu** (310 px popover, top right): the instances with their address, mode and key tail (✓ on the current one), the demo instance, "Connect another instance", the FOCUS SPRITE chips, a credit line under them (the GitHub mark at 11 px, "Sprites by" in `dim`, **Adam Entwistle** in `muted`, an external-link arrow; clicking it opens https://github.com/adamentwistle), the Motion setting, a read-only note, where the key is kept, and "Disconnect and forget key" in red.
 
 **Overview**, scrolling:
 
@@ -65,7 +65,7 @@ The mod fills its pane (a tab: `tab.new {name: "n8n", mod: "flowdeck"}`). Every 
 - The detail pane has the title "workflow › node" (node in red), "Explain with Claude", "Show in graph" and Open run.
 - Below that come a tinted hint card, the "What n8n said" card (message at 14 px, description in a monospace well, HTTP code tag), a 330 px card with the graph of the latest failing run, and "When it happened": 28 six-hour bars plus the 8 latest runs.
 
-**Focus sprites** (`sprites.js` for drawing, `motion.js` for geometry and timing), chosen in the instance menu's FOCUS SPRITE chips (`shared("flowdeck.sprite")`: `probe` by default, `goose`, `brackets`, `flo` or `off`) and drawn in the graph's layer, so they follow pan and zoom.
+**Focus sprites** (`sprites.js` for drawing, `motion.js` for geometry and timing), chosen in the instance menu's FOCUS SPRITE chips (`shared("flowdeck.sprite")`: `probe` by default, `goose`, `brackets`, `flo` or `off`) and drawn in the graph's layer, so they follow pan and zoom. Probe, Goose and Brackets were designed by Adam Entwistle (https://github.com/adamentwistle); `sprites.js` exports the credit as `SPRITE_CREDIT`.
 - **Pixels:** 3 screen px per sprite pixel, or 2 below 75% zoom, so the size on screen stays the same as you zoom. Each pose is cached as native paths, one per colour.
 - **Probe:** a 12×12 drone hovering 26 px above the card's centre. It bobs ±1 sprite pixel every 1.63 s. A faint green fan reaches from it down to the card; a 2 px green line and a 24 px glow sweep across the card every 4.08 s, and the eye moves with them. It blinks for 120 ms every 3.2 s, and its flames flicker. To move (1.4 s) it flies along the wire lifted 20 px, looking ahead, with long flames and a 5-pixel orange trail.
 - **Goose:** 17×14, standing at 55% across the card's top edge and pecking twice a second with sparks. On every third stop it honks between 0.9 and 1.7 s: a HONK! bubble, a flap, and the card jitters ±1.5 px. To move (1.9 s) it walks to the card's edge, waddles along the wire flapping, and climbs onto the next card.
@@ -125,10 +125,12 @@ The mod fills its pane (a tab: `tab.new {name: "n8n", mod: "flowdeck"}`). Every 
   - `model.js`: pure logic covering node kinds, URL and key rules, redaction, stats, grouping, hints, graph layout and the Claude context.
   - `graph.js`: the graph.
   - `ui.js`: parts and motion.
+  - `sprites.js`: the focus sprites (Probe, Goose and Brackets after Adam Entwistle's designs, plus Flo), and `motion.js`: their geometry and timing, with no Herdr imports so it runs under `node --test`.
+  - `history.js`: Ask Claude history, one file per instance in the private folder.
   - One file per view: `connect.js`, `overview.js`, `workflows.js`, `failures.js`, `ask.js`.
   - `demo.js`: the made-up instance.
   - `icons/`: 16 px stroke SVGs, tinted.
-  - `sprite/`: Flo, in two facings.
+  - `sprite/`: Flo, in two facings. Probe, Goose and Brackets are drawn as native paths from pixel maps in `sprites.js`.
 - From `herdr`: `exec`, `readTextFile`, `shared`/`setShared`, `notify`, `panes` (to find its own tab for the toast), `props`, `closeOverlay`, `run` (`tab.new`, `tab.select`), `nextCommand` and `appHome`. From gpui: `PathBuilder` + `window.paint_path` for edges, arrows, the dot grid and the ring; `Input`/`InputState` and `Textarea`/`TextareaState`; and `TextView.markdown`.
 - Programs: `security` (macOS) or `secret-tool` (Linux); `claude`; `open`, `xdg-open` or `rundll32`; `mkdir`, `chmod`, `rm`, `find`, `pkill`.
 - n8n endpoints: `GET /api/v1/workflows`, `GET /api/v1/executions`, `GET /api/v1/executions/:id?includeData=true`.

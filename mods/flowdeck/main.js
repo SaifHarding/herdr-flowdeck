@@ -23,7 +23,7 @@ import { failuresView } from "./failures.js";
 import { askView, AskSession } from "./ask.js";
 import { claudeInstalled } from "./claude.js";
 import { loadHistory, saveHistory, clearHistory, snapshot, restoreTurns, MAX_CONVERSATIONS } from "./history.js";
-import { SPRITES, SPRITE_KEY, spriteKind, motionPrefs } from "./sprites.js";
+import { SPRITES, SPRITE_KEY, SPRITE_CREDIT, spriteKind, motionPrefs } from "./sprites.js";
 import { TICK } from "./motion.js";
 
 const PROFILES = "flowdeck.profiles";
@@ -808,6 +808,12 @@ export default class Flowdeck extends View {
             .bg(on ? alpha(c.brand, 0.16) : "#00000000").border(1).border_color(on ? alpha(c.brand, 0.6) : c.border).text_color(on ? c.foreground : c.muted)
             .hover((st) => st.bg(c.hover)).on_click((_e, cx) => { setShared(SPRITE_KEY, sp.id); cx.notify(); }).child(sp.label);
         })))
+        .child(h_flex().id("sprite-credit").px(10).pb(4).gap(5).items_center().cursor_pointer().tooltip(SPRITE_CREDIT.url)
+          .on_click(() => this.openExternal(SPRITE_CREDIT.url))
+          .child(icon("github", 11, c.dim))
+          .child(div().text_size(11).text_color(c.dim).child("Sprites by"))
+          .child(div().text_size(11).font_medium().text_color(c.muted).child(SPRITE_CREDIT.name))
+          .child(icon("external", 10, c.dim)))
         .child(h_flex().px(10).py(4).gap(8).items_center()
           .child(div().flex_1().text_size(11.5).text_color(c.muted).child(`Motion${shared(MOTION_KEY) ? "" : this.systemReduce ? " (system: reduced)" : ""}`))
           .child(h_flex().gap(2).p(2).rounded(7).bg(alpha(c.foreground, 0.05)).children([["auto", "Auto"], ["reduce", "Reduce"], ["full", "Full"]].map(([id, text]) => {
