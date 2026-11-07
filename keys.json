@@ -1,0 +1,15 @@
+{
+  "global": {
+    "ctrl-shift-n": { "command": "tab.new", "args": { "name": "n8n", "mod": "flowdeck" } }
+  },
+  "mod:flowdeck": {
+    "ctrl-1": "flowdeck.overview",
+    "ctrl-2": "flowdeck.workflows",
+    "ctrl-3": "flowdeck.failures",
+    "ctrl-4": "flowdeck.ask",
+    "ctrl-r": "flowdeck.refresh",
+    "ctrl-j": "flowdeck.next",
+    "ctrl-k": "flowdeck.prev",
+    "ctrl-shift-r": "flowdeck.replay"
+  }
+}
