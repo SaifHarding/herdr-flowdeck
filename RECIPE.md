@@ -23,6 +23,7 @@ The mod fills its pane (a tab: `tab.new {name: "n8n", mod: "flowdeck"}`). Every 
   - A coral Connect button and "Try with demo data".
   - Two lines on where to find the key.
 - Under the card, three trust points with icons: Keys stay local, Read-only, You choose.
+- Below them, a centred 30 px pill with a border: the GitHub mark, "Built by **SaifHarding**" and an external-link arrow. Clicking it opens https://github.com/SaifHarding in the browser.
 
 **Header** (52 px, `chrome`), left to right:
 
@@ -86,7 +87,7 @@ The mod fills its pane (a tab: `tab.new {name: "n8n", mod: "flowdeck"}`). Every 
 - **Hints** read the error: 401/403, expired or "credentials" → auth; 429 or "rate limit" → rate; timeouts and connection resets → network; "cannot read properties", TypeError → code; 5xx → server; "not found" → missing.
 - **Ask.** It runs `claude -p` in the background with no tools, streaming `stream-json` that is read every 160 ms. Stop kills only that process. The answer is cut off after 4 minutes.
 - **Entrances.** Every view rises 8 px and fades in, staggered 40–60 ms. Bars and meters grow from zero. All motion is native (`.transition`, `.spring`, `.loop`, `.spin`, `.frames`); timers only fetch data, and replay steps once per node.
-- **Keys** (`flowdeck.<command>`): `overview`, `workflows`, `failures`, `ask`, `ask-about` (docks Claude on Workflows), `toggle-list`, `refresh`, `demo`, `next`, `prev`, `replay`.
+- **Keys** (`flowdeck.<command>`): `overview`, `workflows`, `failures`, `ask`, `ask-about` (docks Claude on Workflows), `toggle-list`, `connect` (the sign-in screen, to add an instance), `refresh`, `demo`, `next`, `prev`, `replay`.
 
 ## Built from
 

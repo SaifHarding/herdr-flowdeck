@@ -124,6 +124,7 @@ export default class Flowdeck extends View {
       else { if (w) this.asking.scope = { kind: "workflow", workflowId: w.id, label: w.name }; this.go("ask", cx); }
     }
     else if (cmd === "toggle-list") this.toggleList(cx);
+    else if (cmd === "connect") { this.menu = false; this.inputs.url.set_value(""); this.showConnect(cx, { adding: Boolean(this.activeProfile()) }); }
     else if (cmd === "replay" && this.tab === "workflows") { if (this.replay) this.stopReplay(); else this.startReplay(cx); }
     else if (cmd === "next" || cmd === "prev") {
       const list = this.tab === "failures" ? this.derived().groups.map((g) => g.key) : sortedWorkflows(this).map((w) => w.id);

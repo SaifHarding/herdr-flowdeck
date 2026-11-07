@@ -6,6 +6,8 @@ import { h_flex, v_flex, Input } from "gpui-base";
 import { alpha, icon, button, rise, fadeIn } from "./ui.js";
 import { vaultName } from "./vault.js";
 
+const CREDIT_URL = "https://github.com/SaifHarding";
+
 // Three soft lights drifting behind the card. Native loops: they cost nothing between frames and stop when hidden.
 function backdrop(c) {
   // Each light is three discs, largest faintest, which reads as a soft glow.
@@ -116,5 +118,15 @@ export function connectView(view, c) {
         .child(h_flex().gap(14).items_start().map(rise(en, 240, 10))
           .child(trust(c, "lock", "Keys stay local", canRemember ? `In ${where}, never in files` : "In memory, never on disk", c.ok))
           .child(trust(c, "shield", "Read-only", "Flowdeck never edits, runs or deletes", c.run))
-          .child(trust(c, "spark", "You choose", "Claude sees a workflow only when you ask", c.brand)))));
+          .child(trust(c, "spark", "You choose", "Claude sees a workflow only when you ask", c.brand)))
+        .child(h_flex().justify_center().pt(4).map(rise(en, 320, 6))
+          .child(h_flex().id("credit").h(30).px(12).gap(8).items_center().rounded(15).cursor_pointer()
+            .border(1).border_color(c.border).text_color(c.muted)
+            .hover((s) => s.bg(c.hover).text_color(c.foreground).border_color(alpha(c.foreground, 0.25)))
+            .tooltip(CREDIT_URL)
+            .on_click(() => view.openExternal(CREDIT_URL))
+            .child(icon("github", 14, c.foreground))
+            .child(div().text_size(12).child("Built by"))
+            .child(div().text_size(12).font_semibold().text_color(c.foreground).child("SaifHarding"))
+            .child(icon("external", 11, c.dim))))));
 }
