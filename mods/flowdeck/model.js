@@ -157,6 +157,8 @@ const SECRET_URL = [
 const SECRET_ASSIGN = /((?:[\w$-]{0,40}(?:key|secret|token|passw(?:or)?d|pwd|auth\w{0,10}|bearer|credential|dsn|webhook)[\w$-]{0,40})["']?\s{0,4}[:=]\s{0,4})(["'`])[^"'`\n]{4,2048}\2/gi;
 
 // Long tokens with letters and digits mixed like a key, even in formats nobody listed.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function looksRandom(t) {
   const digits = (t.match(/\d/g) ?? []).length;
   return /[A-Za-z]/.test(t) && digits > 0 && ((/[a-z]/.test(t) && /[A-Z]/.test(t)) || digits >= 4);
@@ -169,7 +171,8 @@ export function scrubText(s, max = 2000) {
   out = out.replace(SECRET_VALUE, "[redacted]");
   for (const [re, to] of SECRET_URL) out = out.replace(re, to);
   out = out.replace(SECRET_ASSIGN, "$1$2[redacted]$2");
-  out = out.replace(/[A-Za-z0-9_+=-]{24,256}/g, (t) => (looksRandom(t) ? "[redacted]" : t));
+  // A UUID is an identifier (a page, a row, a run), not a secret: it stays, so a run's evidence can name what it touched.
+  out = out.replace(/[A-Za-z0-9_+=-]{24,256}/g, (t) => (looksRandom(t) && !UUID.test(t) ? "[redacted]" : t));
   return raw.length > max || out.length > max ? `${out.slice(0, max)}… [${Math.max(0, raw.length - max)} more characters]` : out;
 }
 
@@ -441,6 +444,60 @@ export function quotedNeedle(question) {
   return m ? (m[1] ?? m[2] ?? m[3]).trim() : null;
 }
 
+// What to look for in runs when nothing is quoted: an email, a UUID, a title-like phrase (capitalised or camelCase
+// words, with small joining words such as "with" or "for" allowed between), or a case, issue or ticket number.
+const JOINERS = new Set(["with", "for", "of", "the", "and", "to", "in", "on", "a", "an", "at", "by", "from", "via", "vs"]);
+const TITLEISH = (w) => /^[A-Z0-9]/.test(w) || /[a-z][A-Z]/.test(w) || /\d/.test(w);
+export function findNeedle(question) {
+  const q = String(question ?? "");
+  const quoted = quotedNeedle(q);
+  if (quoted) return quoted;
+  const email = q.match(/[\w.+-]{2,64}@[\w-]{2,64}\.[\w.]{2,24}/);
+  if (email) return email[0];
+  const uuid = q.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+  if (uuid) return uuid[0];
+  // The longest run of title-like words, the first word of the question left out (it's capitalised anyway).
+  const words = q.split(/\s+/).map((w) => w.replace(/^[^\w#]+|[^\w]+$/g, ""));
+  let best = null;
+  for (let i = 1; i < words.length; i++) {
+    if (!TITLEISH(words[i])) continue;
+    let j = i, last = i;
+    while (j + 1 < words.length && (TITLEISH(words[j + 1]) || (JOINERS.has(words[j + 1].toLowerCase()) && j + 2 < words.length && TITLEISH(words[j + 2])))) { j++; if (TITLEISH(words[j])) last = j; }
+    const phrase = words.slice(i, last + 1).join(" ");
+    const titled = words.slice(i, last + 1).filter(TITLEISH).length;
+    if (titled >= 3 && phrase.length >= 14 && (!best || phrase.length > best.length)) best = phrase;
+    i = last;
+  }
+  if (best) return best;
+  const num = q.match(/(?:case|issue|ticket|order|invoice|id|#)\s*#?\s*(\d{3,})/i);
+  return num ? num[1] : null;
+}
+
+// What looks wrong inside an item a node put out while n8n counted the node a success: success or ok false, an error
+// field with something in it, an HTTP-ish status of 400 or more. The "failed silently" n8n never flags.
+const PROBLEM_KEY = /(^|_)(error|errors|err|fail|failed|failure|exception)$|Error$|Errors$/;
+export function silentProblems(json, depth = 0, out = [], path = "") {
+  if (!json || typeof json !== "object" || depth > 2 || out.length >= 4) return out;
+  for (const [k, v] of Object.entries(json).slice(0, 80)) {
+    const at = path ? `${path}.${k}` : k;
+    const say = (val) => out.push(`${at}: ${scrubText(typeof val === "string" ? val : JSON.stringify(val), 200)}`);
+    if ((k === "success" || k === "ok") && v === false) say(v);
+    else if (PROBLEM_KEY.test(k) && v && !(Array.isArray(v) && !v.length) && !(typeof v === "object" && !Array.isArray(v) && !Object.keys(v).length)) say(v);
+    else if (/^(status|statusCode|status_code|httpCode|code)$/.test(k) && Number(v) >= 400 && Number(v) < 600) say(v);
+    else if (v && typeof v === "object" && !Array.isArray(v)) silentProblems(v, depth + 1, out, at);
+    if (out.length >= 4) break;
+  }
+  return out;
+}
+
+// An item with what matters first: error, success and status fields lead, so cutting a long item keeps them.
+const LEAD_KEY = /error|success|^ok$|status|code|fail|warn|message|reason/i;
+function leadWithProblems(json) {
+  if (!json || typeof json !== "object" || Array.isArray(json)) return json;
+  const entries = Object.entries(json);
+  return Object.fromEntries([...entries.filter(([k]) => LEAD_KEY.test(k)), ...entries.filter(([k]) => !LEAD_KEY.test(k))]);
+}
+
 // Whether a run's raw JSON mentions the text: compared as JSON would write it, case-insensitively, without parsing.
 export function runMentions(text, needle) {
   const exact = JSON.stringify(String(needle)).slice(1, -1);
@@ -492,7 +549,7 @@ function evidenceKeep(path) {
   return n <= 22;
 }
 
-export function runEvidence(text, cap = 40000) {
+export function runEvidence(text, cap = 60000) {
   const run = leanJson(text, evidenceKeep);
   const rd = run?.data?.resultData ?? {};
   const order = Object.entries(rd.runData ?? {})
@@ -501,13 +558,16 @@ export function runEvidence(text, cap = 40000) {
   const lines = [];
   for (const [name, r] of order) {
     const status = r.error ? "error" : r.executionStatus ?? "success";
+    const items = (Array.isArray(r.data?.main) ? r.data.main : []).flatMap((list) => (Array.isArray(list) ? list.slice(0, 2) : [])).filter(Boolean);
+    const quiet = !r.error ? items.flatMap((it) => silentProblems(it?.json ?? {})).slice(0, 4) : [];
     lines.push(`### "${name}": ${status}${r.executionTime != null ? `, ${r.executionTime} ms` : ""}`);
+    if (quiet.length) lines.push(`⚠ n8n counted this node a success, but its output reports a problem: ${quiet.join("; ")}`);
     if (r.error) lines.push(`Error: ${scrubText(r.error.message ?? "", 600)}${r.error.description ? ` (${scrubText(r.error.description, 600)})` : ""}`);
     const outs = Array.isArray(r.data?.main) ? r.data.main : [];
     outs.forEach((items, o) => {
       const list = (Array.isArray(items) ? items : []).filter(Boolean);
       if (!list.length) { lines.push(outs.length > 1 ? `Output ${o}: no items` : "No items out"); return; }
-      list.slice(0, 2).forEach((it, k) => lines.push(`${outs.length > 1 ? `Output ${o} item ${k + 1}` : `Item ${k + 1}`}: ${JSON.stringify(redact(it?.json ?? {})).slice(0, 1500)}`));
+      list.slice(0, 2).forEach((it, k) => lines.push(`${outs.length > 1 ? `Output ${o} item ${k + 1}` : `Item ${k + 1}`}: ${JSON.stringify(redact(leadWithProblems(it?.json ?? {}))).slice(0, 3000)}`));
     });
   }
   let out = lines.join("\n");
@@ -738,6 +798,7 @@ export const SYSTEM_PROMPT = [
   "Keep it short: a few sentences or a short list. Use at most two small headings, only when the answer has distinct parts. Say you're unsure once, where it matters, not on every point.",
   "Refer to workflows and nodes by their exact names in **bold**. When there's a fix, give it as numbered steps. Use short code blocks only for expressions or values.",
   "If the data includes a run, say plainly whether it's the run the question is about; if it isn't, say so in the first lines.",
+  "In a run, a line starting ⚠ marks a node n8n counted a success although its own output reports a failure: that's often the real cause, so check those first.",
   "Values shown as [redacted] were removed for privacy; never guess them.",
 ].join(" ");
 

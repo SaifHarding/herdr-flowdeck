@@ -8,7 +8,7 @@
 
 import { View, div } from "gpui-kit";
 import { h_flex, v_flex, InputState, TextareaState } from "gpui-base";
-import { shared, setShared, notify, panes, props, closeOverlay, run, exec, nextCommand } from "herdr";
+import { shared, setShared, notify, panes, props, closeOverlay, run, exec, nextCommand, appHome } from "herdr";
 import os from "os";
 import { randomBytes } from "crypto";
 import { colors, alpha, icon, spinner, button, dot, ENTER_MS, MOTION, mono, n8nMark } from "./ui.js";

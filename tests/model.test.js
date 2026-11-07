@@ -378,3 +378,29 @@ test("the run that made the article beats one that only lists it; answers split 
   assert.equal(splitSummary("**TL;DR:** Short.\nMore").summary, "Short.");
   assert.equal(splitSummary("No summary here.").summary, null);
 });
+
+test("unquoted questions still find what to search for", async () => {
+  const { findNeedle } = await import("../mods/flowdeck/model.js");
+  assert.equal(findNeedle("why did my run Weekly Billing Digest for Acme Corp Accounts generate an empty article in n8n"), "Weekly Billing Digest for Acme Corp Accounts");
+  assert.equal(findNeedle('what happened to "Quarterly Report"?'), "Quarterly Report");
+  assert.equal(findNeedle("why did the welcome email to jo.bloggs@example.com bounce"), "jo.bloggs@example.com");
+  assert.equal(findNeedle("what happened with case 24738"), "24738");
+  assert.equal(findNeedle("why is this failing?"), null);
+});
+
+test("a node that n8n counted a success but whose output failed is flagged, and its problem fields lead", async () => {
+  const { runEvidence, silentProblems } = await import("../mods/flowdeck/model.js");
+  const pageId = "41115a82-e84c-8121-a7af-d5da77c061d8";
+  const raw = JSON.stringify({ id: "9", status: "success", startedAt: "2026-11-07T06:25:00Z", data: { resultData: { runData: {
+    "Create Notion Page": [{ startTime: 1, executionTime: 300, executionStatus: "success", data: { main: [[{ json: { id: pageId, url: "https://www.notion.so/x" } }]] } }],
+    "Apply Page Formatting": [{ startTime: 2, executionTime: 1200, executionStatus: "success", data: { main: [[{ json: { blocks: Array.from({ length: 66 }, (_, k) => ({ type: "paragraph", text: "lorem ipsum ".repeat(10) + k })), success: false, blocks_error: { status: 409, code: "conflict_error", message: "Conflict occurred while saving. Please try again." } } }]] } }],
+  } } } });
+  const ev = runEvidence(raw);
+  assert.match(ev.text, /⚠ n8n counted this node a success, but its output reports a problem: .*success: false/);
+  assert.match(ev.text, /conflict_error/);
+  const item = ev.text.split("\n").find((l) => l.startsWith("Item 1") && l.includes("success"));
+  assert.ok(item.indexOf('"success"') < item.indexOf('"blocks"'), "problem fields come before the bulk");
+  assert.ok(ev.text.includes(pageId), "UUIDs are identifiers, not secrets");
+  assert.deepEqual(silentProblems({ success: true, data: { ok: true } }), []);
+  assert.equal(silentProblems({ response: { statusCode: 503 } })[0], "response.statusCode: 503");
+});

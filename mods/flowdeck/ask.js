@@ -6,7 +6,7 @@ import { div, PathBuilder, Background } from "gpui-kit";
 import { h_flex, v_flex, Textarea, TextView } from "gpui-base";
 import { shared, setShared } from "herdr";
 import { alpha, icon, button, chip, spinner, rise, mono, card, dot } from "./ui.js";
-import { buildContext, buildPrompt, SYSTEM_PROMPT, lastMentioned, mentionsInOrder, culpritIn, safeMarkdown, answerLinkAllowed, quotedNeedle, mentionScore, runEvidence, running, when, splitSummary } from "./model.js";
+import { buildContext, buildPrompt, SYSTEM_PROMPT, lastMentioned, mentionsInOrder, culpritIn, safeMarkdown, answerLinkAllowed, findNeedle, mentionScore, runEvidence, running, when, splitSummary } from "./model.js";
 import { MODELS, startAsk, readAsk, cancelAsk, cleanupAsk } from "./claude.js";
 import { graphView, GraphState } from "./graph.js";
 import { randomBytes } from "crypto";
@@ -16,7 +16,8 @@ const MODEL = "flowdeck.ask-model";
 const POLL = 160;
 const MAX_MS = 4 * 60e3;
 const WALK_MS = 700;
-const RUN_SEARCH = 50;
+// One workflow's runs are searched back through the whole week; the whole instance, the newest 150.
+const RUN_SEARCH_WORKFLOW = 300, RUN_SEARCH_ALL = 150;
 
 const SUGGEST = {
   all: ["What's failing most this week, and why?", "Which workflows haven't run in the last 7 days?", "Which workflows send messages to Slack or email?", "Summarise what this instance automates, in five bullets."],
@@ -92,52 +93,42 @@ export class AskSession {
   // every match (mentionScore), so a run that only lists the title loses to the one that made it. One run is read at
   // a time, as raw text, and dropped: only ids and scores are kept, and the chosen run is read again on a yes.
   async findRun(view, scope, needle, a, cx, exclude = null) {
-    const wid = scope.kind !== "all" ? scope.workflowId : null;
-    const list = view.data.executions.filter((e) => (!wid || e.workflowId === wid) && e.workflowId !== exclude && !running(e)).slice(0, RUN_SEARCH);
+    // The workflow asked about, else one the question names, else the whole instance.
+    let wid = scope.kind !== "all" ? scope.workflowId : null;
+    if (!wid && !exclude) {
+      const named = lastMentioned(a.question ?? "", view.data.workflows.map((w) => w.name));
+      wid = view.data.workflows.find((w) => w.name === named)?.id ?? null;
+    }
+    const list = view.data.executions.filter((e) => (!wid || e.workflowId === wid) && e.workflowId !== exclude && !running(e)).slice(0, wid ? RUN_SEARCH_WORKFLOW : RUN_SEARCH_ALL);
     a.searching = { needle, done: 0, total: list.length, hits: 0 };
+    this.stopSearch = false;
     cx.notify();
     const searched = { needle, count: 0, workflow: wid ? view.derived().byId.get(wid)?.name : exclude ? "other workflows" : null };
     const hits = [];
-    for (const e of list) {
-      if (!this.preparing) break;
-      let text = null;
-      try { text = await view.source.executionText(String(e.id)); } catch {}
-      searched.count++;
-      const score = text ? mentionScore(text, needle) : 0;
-      text = null;
-      if (score) hits.push({ id: String(e.id), startedAt: e.startedAt, status: e.status, score, workflowId: e.workflowId });
-      if (a.searching) { a.searching.done = searched.count; a.searching.hits = hits.length; }
-      cx.notify();
-    }
+    // Three at a time, each read as raw text, scored and dropped.
+    const queue = list.slice();
+    const worker = async () => {
+      while (queue.length && this.preparing && !this.stopSearch) {
+        const e = queue.shift();
+        let text = null;
+        try { text = await view.source.executionText(String(e.id)); } catch {}
+        const score = text ? mentionScore(text, needle) : 0;
+        text = null;
+        searched.count++;
+        if (score) hits.push({ id: String(e.id), startedAt: e.startedAt, status: e.status, score, workflowId: e.workflowId, at: searched.count });
+        // A strong match (a field value, mentioned again and again) that nothing has come near over the next 25 runs is
+        // the one: stop there rather than reading the rest of the week.
+        const best = hits.reduce((m, h) => (!m || h.score > m.score ? h : m), null);
+        const runnerUp = hits.filter((h) => h !== best).reduce((m, h) => Math.max(m, h.score), 0);
+        if (best && best.score >= 15 && best.score >= runnerUp * 3 && searched.count - best.at >= 25) this.stopSearch = true;
+        if (a.searching) { a.searching.done = searched.count; a.searching.hits = hits.length; }
+        cx.notify();
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
     a.searching = null;
     hits.sort((x, y) => y.score - x.score || Date.parse(y.startedAt) - Date.parse(x.startedAt));
     return { hits: hits.slice(0, 4), searched };
-  }
-
-  // Look further from an answer that used a run: the run before or after it in the same workflow, or runs of other
-  // workflows that mention the same text. Each starts a follow-up that asks before sending, like any run.
-  lookFurther(view, t, mode, cx) {
-    if (this.busy || !t) return;
-    const base = t.found, needle = base?.needle ?? t.searched?.needle ?? null;
-    const byId = view.derived().byId;
-    if ((mode === "prev" || mode === "next") && base) {
-      const runs = view.data.executions.filter((e) => e.workflowId === base.workflowId && !running(e)).sort((x, y) => Date.parse(x.startedAt) - Date.parse(y.startedAt));
-      const i = runs.findIndex((e) => String(e.id) === String(base.id));
-      const pick = i < 0 ? null : runs[i + (mode === "next" ? 1 : -1)];
-      if (!pick) { t.lookNote = mode === "next" ? "That's the newest run." : "There's no earlier run in the last 7 days."; cx.notify(); return; }
-      const reason = `${mode === "prev" ? "the run before" : "the run after"} #${base.id}`;
-      const wf = byId.get(pick.workflowId)?.name;
-      this.ask(`Look further: ${reason} (#${pick.id})`, view, cx, {
-        needle,
-        hits: [{ id: String(pick.id), startedAt: pick.startedAt, status: pick.status, score: 0, workflowId: pick.workflowId, reason }],
-        prompt: `Look further at run #${pick.id}, ${reason}${wf ? ` in "${wf}"` : ""}. Compare it with what you found before: does it show the same problem, or does it explain what happened?`,
-      });
-    } else if (mode === "elsewhere" && needle) {
-      this.ask(`Look further: other workflows' runs that mention “${needle}”`, view, cx, {
-        needle, elsewhere: true, excludeWorkflow: base?.workflowId ?? (this.scope.kind !== "all" ? this.scope.workflowId : null),
-        prompt: `Look further: this is a run from another workflow that also mentions "${needle}". What does it add to what you found before?`,
-      });
-    }
   }
 
   // `opts`: `prompt`, the question as Claude gets it (default: as shown); `hits`, runs already chosen (Look further's
@@ -149,7 +140,7 @@ export class AskSession {
     const id = ++this.seq;
     const scope = { ...this.scope };
     const q = { id: `q${id}`, role: "user", text: question, scope: scope.label };
-    const a = { id: `a${id}`, role: "assistant", text: "", streaming: true, scope: scope.label, model: this.model, started: Date.now() };
+    const a = { id: `a${id}`, role: "assistant", text: "", streaming: true, scope: scope.label, model: this.model, started: Date.now(), question };
     // Turns are question/answer pairs, newest first; Claude is given them oldest first.
     const history = this.turns.slice().reverse().flatMap((p) => [p.q, p.a]).filter((t) => !t.error && t.text);
     this.turns.unshift({ q, a });
@@ -162,7 +153,7 @@ export class AskSession {
     }
     try {
       // A quoted name or title: find the run that produced it, and share what it did only if the person says yes.
-      const needle = opts.needle ?? quotedNeedle(question);
+      const needle = opts.needle ?? findNeedle(question);
       let evidence = null, searched = null;
       if ((needle || opts.hits) && view.source?.executionText) {
         this.preparing = true;
@@ -301,7 +292,8 @@ function runSearch(c, t) {
   if (t.searching) {
     const { needle, done, total } = t.searching;
     return h_flex().gap(9).items_center().child(spinner(13, c.run))
-      .child(div().flex_1().min_w(0).text_size(12.3).text_color(c.muted).child(`Searching recent runs for ${quote(needle)} · ${done}/${total}${t.searching.hits ? ` · ${t.searching.hits} mention it` : ""}`));
+      .child(div().flex_1().min_w(0).text_size(12.3).text_color(c.muted).child(`Searching runs for ${quote(needle)} · ${done}/${total}${t.searching.hits ? ` · ${t.searching.hits} mention it` : ""}`))
+      .when(t.searching.hits > 0, (e) => e.child(button(c, { id: `use-best-${t.id}`, label: "Use best so far", size: "sm", onClick: (_e, cx) => { searchStopper(); cx.notify(); } })));
   }
   if (t.found && t.confirm) {
     const f = t.found;
@@ -333,6 +325,7 @@ function runSearch(c, t) {
 // Look further, under an answer that used a run (or searched for one): the run before, the run after, or the same
 // text in other workflows.
 let lookHandler = () => {};
+let searchStopper = () => {};
 function lookRow(c, t) {
   if (t.streaming || t.error || (!t.found && !t.searched)) return null;
   const needle = t.found?.needle ?? t.searched?.needle;
@@ -392,6 +385,7 @@ const makeOpenSafe = (view) => (url) => {
 export function askView(view, c) {
   openSafe = makeOpenSafe(view);
   lookHandler = (t, mode, cx) => view.lookFurther(t, mode, cx);
+  searchStopper = () => { view.asking.stopSearch = true; };
   const s = view.asking, en = Boolean(view.entered.ask);
   const busy = s.busy;
   const sug = SUGGEST[s.scope.kind] ?? SUGGEST.all;
@@ -502,6 +496,7 @@ function focusPanel(view, c, f, width) {
 export function askDock(view, c, w) {
   openSafe = makeOpenSafe(view);
   lookHandler = (t, mode, cx) => view.lookFurther(t, mode, cx);
+  searchStopper = () => { view.asking.stopSearch = true; };
   const s = view.asking, busy = s.busy;
   const f = claudeFocus(view, w.id);
   const mine = s.scope.kind !== "all" && s.scope.workflowId === w.id;
