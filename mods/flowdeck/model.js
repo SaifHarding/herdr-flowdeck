@@ -851,7 +851,10 @@ export function mentionsInOrder(text, names) {
 // answer doesn't pin it on a node.
 const TROUBLE = /(fail|error|broke|broken|cause|culprit|issue|problem|refus|reject|expire|invalid|timed? ?out|timeout|rate.?limit|\b40[13]\b|\b429\b|\b5\d\d\b|undefined|crash|exception|wrong|missing)/i;
 
-export function culpritIn(text, names) {
+export const culpritIn = (text, names) => suspectsIn(text, names, 1)[0] ?? null;
+
+// Every node the answer ties to the problem, most blamed first: the first is the likely cause, the rest are involved.
+export function suspectsIn(text, names, limit = 4) {
   const score = new Map(), first = new Map();
   let k = 0;
   for (const sentence of String(text ?? "").split(/[.!?](?:\s+|$)|\n+/)) {
@@ -861,9 +864,7 @@ export function culpritIn(text, names) {
       if (!first.has(n)) first.set(n, k++);
     }
   }
-  let best = null;
-  for (const [n, v] of score) if (!best || v > score.get(best) || (v === score.get(best) && first.get(n) < first.get(best))) best = n;
-  return best;
+  return [...score.keys()].sort((x, y) => score.get(y) - score.get(x) || first.get(x) - first.get(y)).slice(0, limit);
 }
 
 // Answers, made safe to draw: see ask.js.

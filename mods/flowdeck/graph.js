@@ -318,6 +318,15 @@ function alertMark(c, n, z, labelText) {
       .child(icon("alert", 11, "#ffffff")).child(div().text_size(10.5).font_bold().text_color("#ffffff").child(labelText ?? "Likely cause")));
 }
 
+// Other nodes the answer ties to the problem: a steady amber ring and an "Involved" tag, quieter than the red one.
+function suspectMark(c, n, z) {
+  const w = n.w * z, h = n.h * z, r = (n.info.sub ? n.h / 2 : 11) * z;
+  return div().id(`suspect-${n.name}`).absolute().left(n.x * z - 5).top(n.y * z - 5).w(w + 10).h(h + 10)
+    .child(div().absolute().left(0).top(0).w(w + 10).h(h + 10).rounded(r + 5).border(1.5).border_color(alpha(c.warn, 0.85)).bg(alpha(c.warn, 0.06)))
+    .child(h_flex().absolute().left(2).top(h + 12).h(18).px(7).gap(4).rounded(9).items_center().bg(alpha(c.warn, 0.9))
+      .child(div().text_size(10).font_bold().text_color("#1b1b1b").child("Involved")));
+}
+
 function startPan(state, e, button, cx) {
   state.dragging = { x: e.position.x, y: e.position.y, button };
   state.moved = false;
@@ -371,6 +380,7 @@ export function graphView(c, { id, graph, state, run, replay, selected, onSelect
       const info = o ? `${o.status}${o.ms != null ? ` in ${o.ms} ms` : ""}${o.runs > 1 ? ` · ${o.runs} runs` : ""}` : null;
       return nodeCard(c, n, z, states.get(n.name) ?? null, { selected: selected === n.name, onSelect, entered: state.entered, index: i, runInfo: info, shake: fs?.shake === n.name });
     }))
+    .children((focus?.suspects ?? []).map((name) => graph?.nodes.find((x) => x.name === name)).filter(Boolean).map((n) => suspectMark(c, n, z)))
     .when(Boolean(focus?.alert), (e) => { const n = graph?.nodes.find((x) => x.name === focus.alert); return n ? e.child(alertMark(c, n, z, focus.alertLabel)) : e; })
     // The probe brings its own scan; the others keep Flowdeck's scan frame while Claude reads a node.
     .when(Boolean(focus?.scan) && kind !== "probe", (e) => { const n = graph?.nodes.find((x) => x.name === focus.node); return n ? e.child(scanBeam(c, n, z)) : e; })

@@ -596,6 +596,22 @@ export default class Flowdeck extends View {
     cx.notify();
   }
 
+  // From an answer's Open buttons: the workflow (and run) on the graph, with the conversation docked beside it, its
+  // scope moved there, so the next question is about what's on screen.
+  continueIn(wid, runId, cx) {
+    const w = this.derived().byId.get(wid);
+    if (!w) return;
+    const e = runId ? this.data.executions.find((x) => String(x.id) === String(runId)) : null;
+    this.showWorkflow(wid, cx, runId ? { runId: String(runId) } : {});
+    this.asking.scope = e && failed(e)
+      ? { kind: "failure", workflowId: wid, runId: String(runId), label: `${w.name} › run #${runId}` }
+      : { kind: "workflow", workflowId: wid, label: runId ? `${w.name} › run #${runId}` : w.name };
+    this.dockOpen = true;
+    this.inspectFromDock = false;
+    cx.timer.after(120, () => { try { this.inputs.ask.focus(); } catch {} });
+    cx.notify();
+  }
+
   closeDock(cx) {
     this.dockOpen = false;
     cx.notify();

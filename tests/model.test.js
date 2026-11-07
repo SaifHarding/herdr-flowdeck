@@ -410,3 +410,11 @@ test("answers' run mentions are picked out for the Open row", async () => {
   assert.deepEqual(runsMentioned("The run is execution 72283 of the workflow. Run #72301 is the wrong one; execution #72283 again; 409 error."), ["72283", "72301"]);
   assert.deepEqual(runsMentioned("No runs here, just 2026 and HTTP 409."), []);
 });
+
+test("the answer's suspects are ranked: the likely cause first, then the nodes involved", async () => {
+  const { suspectsIn, culpritIn } = await import("../mods/flowdeck/model.js");
+  const nodes = ["Load Secrets", "Validate HMAC", "Route", "Notify"];
+  const text = "**Validate HMAC** fails because the body changed. **Validate HMAC** throws at line 21. **Load Secrets** returned an empty secret, which also causes the mismatch. **Route** ran fine.";
+  assert.deepEqual(suspectsIn(text, nodes), ["Validate HMAC", "Load Secrets"]);
+  assert.equal(culpritIn(text, nodes), "Validate HMAC");
+});

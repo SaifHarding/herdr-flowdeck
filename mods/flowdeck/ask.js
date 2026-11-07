@@ -6,7 +6,7 @@ import { div, PathBuilder, Background } from "gpui-kit";
 import { h_flex, v_flex, Textarea, TextView } from "gpui-base";
 import { shared, setShared } from "herdr";
 import { alpha, icon, button, chip, spinner, rise, mono, card, dot } from "./ui.js";
-import { runsMentioned, buildContext, buildPrompt, SYSTEM_PROMPT, lastMentioned, mentionsInOrder, culpritIn, safeMarkdown, answerLinkAllowed, findNeedle, mentionScore, runEvidence, running, when, splitSummary } from "./model.js";
+import { runsMentioned, buildContext, buildPrompt, SYSTEM_PROMPT, lastMentioned, mentionsInOrder, suspectsIn, safeMarkdown, answerLinkAllowed, findNeedle, mentionScore, runEvidence, running, when, splitSummary } from "./model.js";
 import { MODELS, startAsk, readAsk, cancelAsk, cleanupAsk } from "./claude.js";
 import { graphView, GraphState } from "./graph.js";
 import { randomBytes } from "crypto";
@@ -57,6 +57,7 @@ export class AskSession {
     this.task = null;
     this.walk?.cancel();
     this.walk = null;
+    if (this.turns[0]?.a) this.turns[0].a.walking = false;
     const job = this.job;
     this.job = null;
     if (job) {
@@ -187,10 +188,11 @@ export class AskSession {
       a.job = job;
       this.job = job;
       a.floStep = 0;
+      a.walking = true;
       this.walk?.cancel();
       this.walk = cx.timer.every(WALK_MS, (cx) => {
         if (a.floStep < (a.tourLength ?? 0) - 1) { a.floStep++; cx.notify(); }
-        else if (!a.streaming) { this.walk?.cancel(); this.walk = null; }
+        else if (!a.streaming) { a.walking = false; this.walk?.cancel(); this.walk = null; cx.notify(); }
       });
       this.task = cx.timer.every(POLL, (cx) => {
         if (this.job !== job) return;
@@ -333,7 +335,7 @@ let openHandler = null;
 const openHandlerFor = (view) => ({
   workflow: (id) => view.derived().byId.get(id) ?? null,
   run: (id) => view.data.executions.find((e) => String(e.id) === String(id)) ?? null,
-  showWorkflow: (wid, runId, cx) => view.showWorkflow(wid, cx, runId ? { runId } : {}),
+  showWorkflow: (wid, runId, cx) => view.continueIn(wid, runId, cx),
   n8nWorkflow: (wid) => view.openLink(links.workflow(view.profile?.base, wid)),
   n8nRun: (wid, id) => view.openLink(links.execution(view.profile?.base, wid, id)),
   canOpenN8n: view.profile?.mode !== "demo",
@@ -492,16 +494,20 @@ export function claudeFocus(view, onlyWorkflow = null) {
   const failing = scope.kind === "failure" ? view.data.runs.get(String(scope.runId))?.node : null;
   const named = Boolean(node);
   node = node ?? failing ?? (wf.nodes.find((n) => /trigger|webhook/i.test(n.type)) ?? wf.nodes[0]).name;
-  const walking = Boolean(a) && (a.floStep ?? 0) < tour.length - 1;
+  // Walking only while the walk timer runs: an answer opened later, or read in another workflow, goes straight to its
+  // culprit instead of waiting on a walk that already ended.
+  const walking = Boolean(a?.walking) && (a.floStep ?? 0) < tour.length - 1;
   const busy = Boolean(a?.streaming) || walking;
   // Once the answer is in and Flo has walked it, Flo goes to the node the answer blames (or, asked about a failure
   // without blaming a node, the one that failed) and raises the alarm there.
-  const culprit = !busy && a && !a.error ? culpritIn(text, wf.nodes.map((n) => n.name)) ?? failing : null;
+  const blamed = !busy && a && !a.error ? suspectsIn(text, wf.nodes.map((n) => n.name), 4) : [];
+  const culprit = blamed[0] ?? (!busy && a && !a.error ? failing : null);
+  const suspects = blamed.filter((n) => n !== culprit).slice(0, 3);
   if (culprit) node = culprit;
   const scanning = busy && named;
   const mood = busy ? (named ? "scan" : "think") : culprit ? "error" : a?.error ? "error" : !a && failing === node ? "error" : "look";
   return {
-    workflow: wf, node, mood, named, streaming: busy, scan: scanning, alert: culprit, culprit,
+    workflow: wf, node, mood, named, streaming: busy, scan: scanning, alert: culprit, culprit, suspects,
     step: tour.length ? Math.min(a?.floStep ?? 0, tour.length - 1) + 1 : 0, steps: tour.length,
     label: culprit ? `Likely cause: ${culprit}` : scanning ? `Scanning ${node}` : `Claude's focus: ${node}`,
   };
@@ -536,8 +542,9 @@ export function askDock(view, c, w) {
   searchStopper = () => { view.asking.stopSearch = true; };
   const s = view.asking, busy = s.busy;
   const f = claudeFocus(view, w.id);
+  // The whole conversation comes along: open a workflow or run from an answer and you carry on here.
   const mine = s.scope.kind !== "all" && s.scope.workflowId === w.id;
-  const turns = mine ? s.turns : [];
+  const turns = s.turns;
   const sug = (SUGGEST[s.scope.kind] ?? SUGGEST.workflow).slice(0, 3);
   const status = f && (f.streaming || f.culprit)
     ? h_flex().id("dock-status").mx(12).px(11).py(8).gap(9).items_center().rounded(9)
