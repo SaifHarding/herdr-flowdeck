@@ -13,9 +13,9 @@ There's a demo mode with a made-up instance, so you can try it before connecting
 
 ![Workflows](preview.png)
 
-| Overview | Failures |
-|---|---|
-| ![Overview](docs/overview.png) | ![Failures](docs/failures.png) |
+| Overview | Failures | Ask Claude, with Flo following the answer |
+|---|---|---|
+| ![Overview](docs/overview.png) | ![Failures](docs/failures.png) | ![Claude's focus](docs/ask-focus.png) |
 
 ## Install
 
