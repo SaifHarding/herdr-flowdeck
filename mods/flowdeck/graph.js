@@ -29,15 +29,25 @@ export class GraphState {
   }
 
   // Fits the whole graph in view, centred, no bigger than a little over life size.
-  fit(graph, animate = true) {
-    if (!this.size || !graph?.nodes.length) return;
+  fitTarget(graph) {
+    if (!this.size || !graph?.nodes.length) return null;
     const { width: W, height: H } = this.size;
     // `pad` leaves room for the controls laid over a big graph; a small one fills its card.
     const pad = this.pad ?? 96;
-    const z = Math.max(MIN_Z, Math.min(1.1, (W - pad / 2) / graph.width, (H - pad) / graph.height));
-    this.zoom = Math.round(z * 100) / 100;
-    this.x = (W - graph.width * this.zoom) / 2;
-    this.y = Math.max(pad / 6, (H - graph.height * this.zoom) / 2 - pad / 8);
+    const zoom = Math.round(Math.max(MIN_Z, Math.min(1.1, (W - pad / 2) / graph.width, (H - pad) / graph.height)) * 100) / 100;
+    return { zoom, x: (W - graph.width * zoom) / 2, y: Math.max(pad / 6, (H - graph.height * zoom) / 2 - pad / 8) };
+  }
+
+  fit(graph, animate = true) {
+    const t = this.fitTarget(graph);
+    if (t) this.apply(t, animate);
+  }
+
+  apply(t, animate) {
+    this.anim = null;
+    this.zoom = t.zoom;
+    this.x = t.x;
+    this.y = t.y;
     this.glide = animate;
   }
 
@@ -48,18 +58,61 @@ export class GraphState {
     const { width: W, height: H } = this.size, pad = this.pad ?? 96;
     const fitZ = Math.min((W - pad / 2) / graph.width, (H - pad) / graph.height);
     if (center && fitZ < READABLE && graph.nodes.some((n) => n.name === center)) this.follow(graph, center, animate);
+    // Small enough to fit: everything, the sprite included, is in view at a readable size.
     else this.fit(graph, animate);
   }
 
   // Centres one node at a readable zoom: the camera that follows Flo in a narrow panel.
-  follow(graph, name, animate = true) {
+  followTarget(graph, name) {
     const n = graph?.nodes.find((x) => x.name === name);
-    if (!this.size || !n) return;
+    if (!this.size || !n) return null;
     const { width: W, height: H } = this.size;
-    this.zoom = Math.max(0.55, Math.min(0.9, (W - 40) / (CARD.w * 2.2)));
-    this.x = W / 2 - (n.x + n.w / 2) * this.zoom;
-    this.y = H / 2 - (n.y + n.h / 2) * this.zoom + 18;
-    this.glide = animate;
+    const zoom = Math.max(0.55, Math.min(0.9, (W - 40) / (CARD.w * 2.2)));
+    return { zoom, x: W / 2 - (n.x + n.w / 2) * zoom, y: H / 2 - (n.y + n.h / 2) * zoom + 18 };
+  }
+
+  follow(graph, name, animate = true) {
+    const t = this.followTarget(graph, name);
+    if (t) this.apply(t, animate);
+  }
+
+  // ── Smooth zoom ──
+
+  // Eases the view to `target` over `dur` ms, a frame every 16 ms, from a timer the click or scroll that asked for it
+  // starts (a timer started in render never fires) and that stops when the view lands. Zoom eases in log space, so
+  // zooming in and out feel the same; with an anchor, the point under it stays exactly where it is all the way.
+  tween(target, cx, onChange, { anchor = null, dur = 240 } = {}) {
+    this.anim = { from: { zoom: this.zoom, x: this.x, y: this.y }, to: target, anchor, start: Date.now(), dur };
+    this.glide = false;
+    if (this.animTask) return;
+    this.animTask = cx.timer.every(16, (cx) => {
+      const a = this.anim;
+      if (!a) { this.animTask?.cancel(); this.animTask = null; return; }
+      const k = Math.min(1, (Date.now() - a.start) / a.dur), e = 1 - Math.pow(1 - k, 3);
+      const z = a.from.zoom * Math.pow(a.to.zoom / a.from.zoom, e);
+      if (a.anchor) {
+        const [px, py] = a.anchor;
+        this.x = px - ((px - a.from.x) * z) / a.from.zoom;
+        this.y = py - ((py - a.from.y) * z) / a.from.zoom;
+      } else {
+        this.x = a.from.x + (a.to.x - a.from.x) * e;
+        this.y = a.from.y + (a.to.y - a.from.y) * e;
+      }
+      this.zoom = z;
+      if (k >= 1) { this.anim = null; this.animTask?.cancel(); this.animTask = null; }
+      onChange(cx);
+    });
+  }
+
+  // Zooms by `factor` about a point (the view's centre without one), smoothly. Quick repeats, like a spun wheel, build
+  // on where the last one was heading rather than where the view happens to be mid-glide.
+  zoomSmooth(factor, at, cx, onChange) {
+    if (!this.size) return;
+    const base = this.anim?.anchor ? this.anim.to.zoom : this.zoom;
+    const zoom = Math.max(MIN_Z, Math.min(MAX_Z, base * factor));
+    if (Math.abs(zoom - this.zoom) < 0.0005 && !this.anim) return;
+    const px = at?.x ?? this.size.width / 2, py = at?.y ?? this.size.height / 2;
+    this.tween({ zoom }, cx, onChange, { anchor: [px, py] });
   }
 
   zoomBy(factor, at) {
@@ -140,6 +193,7 @@ function grid(state, c) {
   // At least 18 px apart, so a zoomed-out canvas doesn't draw tens of thousands of dots.
   let step = 22 * state.zoom;
   while (step < 18) step *= 2;
+  step = Math.round(step);
   // Built once per size and spacing, one step larger than the view each way, and slid by the pan offset modulo the
   // spacing: panning moves it, never rebuilds it.
   const ox = ((state.x % step) + step) % step, oy = ((state.y % step) + step) % step;
@@ -321,7 +375,7 @@ export function graphView(c, { id, graph, state, run, replay, selected, onSelect
       else if (!state.touched || state.fitted?.split("|")[0] !== String(graph?.key)) { state.fitOrCenter(graph, center, false); state.fitted = fitKey; }
       onChange(cx);
     })
-    .on_mouse_down("left", (e, cx) => { state.dragging = { x: e.position.x, y: e.position.y }; state.moved = false; state.glide = false; cx.notify(); })
+    .on_mouse_down("left", (e, cx) => { state.dragging = { x: e.position.x, y: e.position.y }; state.moved = false; state.glide = false; state.anim = null; cx.notify(); })
     .on_mouse_move((e, cx) => {
       const d = state.dragging;
       if (!d) return;
@@ -343,8 +397,10 @@ export function graphView(c, { id, graph, state, run, replay, selected, onSelect
     .on_scroll_wheel((e, cx) => {
       state.glide = false;
       state.touched = true;
-      if (e.modifiers?.platform || e.modifiers?.control) state.zoomBy(Math.exp(-e.delta.y * 0.004), e.local_position ?? null);
-      else { state.x += e.delta.x; state.y += e.delta.y; }
+      if (e.modifiers?.platform || e.modifiers?.control) { state.zoomSmooth(Math.exp(-e.delta.y * 0.003), e.local_position ?? null, cx, onChange); return; }
+      state.anim = null;
+      state.x += e.delta.x;
+      state.y += e.delta.y;
       onChange(cx);
     })
     .child(grid(state, c) ?? div())
@@ -352,14 +408,26 @@ export function graphView(c, { id, graph, state, run, replay, selected, onSelect
 }
 
 // Zoom and fit, over the graph's corner.
-export function graphControls(c, { id, state, graph, onChange }) {
+export function graphControls(c, { id, state, graph, onChange, center = null }) {
   const btn = (bid, iconName, tip, fn) => h_flex().id(`${id}-${bid}`).size(28).items_center().justify_center().rounded(6).cursor_pointer()
     .hover((s) => s.bg(c.hover)).tooltip(tip).on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-    .on_click((_e, cx) => { fn(); state.glide = true; state.touched = bid !== "fit"; onChange(cx); }).child(icon(iconName, 14, c.muted));
+    .on_click((_e, cx) => { state.touched = bid !== "fit"; fn(cx); onChange(cx); }).child(icon(iconName, 14, c.muted));
   return h_flex().id(id).gap(2).p(3).rounded(9).bg(c.popover ?? c.surface).border(1).border_color(c.border).shadow_md().items_center()
-    .child(btn("out", "minus", "Zoom out", () => state.zoomBy(1 / 1.2)))
+    .child(btn("out", "minus", "Zoom out", (cx) => state.zoomSmooth(1 / 1.25, null, cx, onChange)))
     .child(div().w(44).text_center().text_size(11.5).font_family(mono()).text_color(c.muted).child(`${Math.round(state.zoom * 100)}%`))
-    .child(btn("in", "plus", "Zoom in", () => state.zoomBy(1.2)))
+    .child(btn("in", "plus", "Zoom in", (cx) => state.zoomSmooth(1.25, null, cx, onChange)))
     .child(div().w(1).h(16).bg(c.border).mx(2))
-    .child(btn("fit", "fit", "Fit to view", () => state.fit(graph, true)));
+    .child(btn("fit", "fit", "Fit to view", (cx) => { const t = state.fitTarget(graph); if (t) state.tween(t, cx, onChange); }))
+    // Glides to the sprite and pins the view to it again, after the person panned away.
+    .when(Boolean(center), (e) => e.child(div().w(1).h(16).bg(c.border).mx(2))
+      .child(h_flex().id(`${id}-locate`).size(28).items_center().justify_center().rounded(6).cursor_pointer()
+        .hover((s) => s.bg(c.hover)).tooltip(`Jump to the sprite · ${center}`).on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+        .on_click((_e, cx) => {
+          const t = state.followTarget(graph, center);
+          if (t) state.tween(t, cx, onChange, { dur: 420 });
+          state.touched = false;
+          state.fitted = `${graph?.key}|${center}`;
+          onChange(cx);
+        })
+        .child(icon("locate", 14, c.brand))));
 }

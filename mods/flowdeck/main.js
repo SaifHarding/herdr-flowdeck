@@ -118,6 +118,11 @@ export default class Flowdeck extends View {
         cx.notify();
       }
     });
+    cx.timer.every(TICK, (cx) => {
+      if (this.mode !== "app" || !this.motionWanted()) return;
+      for (const g of [this.graph, this.failGraph, this.askGraph]) if (g) g.needsTick = false;
+      cx.notify();
+    });
     cx.timer.every(POLL_MS, (cx) => {
       if (this.mode !== "app" || !this.source || Date.now() < (this.data.backoff ?? 0)) return;
       const full = Date.now() - (this.data.fullAt ?? 0) > FULL_MS;
@@ -623,12 +628,11 @@ export default class Flowdeck extends View {
     return pref === "reduce" ? true : pref === "full" ? false : Boolean(this.systemReduce);
   }
 
-  // A sprite's move steps every TICK ms while it travels (and through a honk), then stops: nothing ticks while
-  // sprites dwell, and a hidden graph isn't drawn, so its move doesn't ask for more.
-  pumpMotion(cx) {
-    if (this.motionTask || ![this.graph, this.failGraph, this.askGraph].some((g) => g?.needsTick)) return;
-    for (const g of [this.graph, this.failGraph, this.askGraph]) if (g) g.needsTick = false;
-    this.motionTask = cx.timer.after(TICK, (cx) => { this.motionTask = null; cx.notify(); });
+  // A sprite's move steps every TICK ms while it travels (and through a honk). The ticker below runs from init (a
+  // timer started during render never fires); it redraws only while a drawn graph says a move is under way, so it
+  // costs nothing while sprites dwell.
+  motionWanted() {
+    return [this.graph, this.failGraph, this.askGraph].some((g) => g?.needsTick);
   }
 
   render(cx) {
@@ -644,7 +648,6 @@ export default class Flowdeck extends View {
       : this.tab === "workflows" ? workflowsView(this, c)
       : this.tab === "failures" ? failuresView(this, c)
       : askView(this, c);
-    this.pumpMotion(cx);
     return v_flex().id("root").size_full().relative().bg(c.canvas ?? c.background).text_color(c.foreground).text_size(13)
       .on_size_change((size, cx) => { this.size = size; cx.notify(); })
       .child(this.header(c, inOverlay))

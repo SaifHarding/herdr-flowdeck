@@ -193,11 +193,14 @@ export function workflowsView(view, c) {
         .child(button(c, { id: "wf-ask", label: view.dockOpen ? "Asking Claude" : "Ask about this", iconName: "spark", size: "sm", kind: view.dockOpen ? "solid" : "ghost",
           onClick: (_e, cx) => (view.dockOpen ? view.closeDock(cx) : view.openDock(w, cx)) }))
         .when(view.profile?.mode !== "demo", (e) => e.child(button(c, { id: "wf-open", label: "Open in n8n", iconName: "external", size: "sm", onClick: () => view.openLink(links.workflow(base, w.id)) }))));
+    // The view is pinned to the sprite: it opens on the node the sprite stands on and, on a big graph, follows it as it
+    // moves (replays, Claude naming nodes) until the person pans or zooms. The jump button goes back and pins again.
+    const focus = (view.dockOpen && !view.replay && claudeFocus(view, w.id)) || focusOf(view, graph, run);
     const canvas = div().id("canvas-wrap").relative().flex_1().min_w(0).h_full()
         .child(graphView(c, { id: "graph", graph, state: view.graph, run, replay: view.replay, selected: view.sel.node, active: w.active,
-          center: view.replay && run?.order?.length ? run.order[Math.min(view.replay.step, run.order.length - 1)]?.name : view.sel.centerNode ?? run?.node ?? run?.order?.[0]?.name ?? graph?.nodes.find((n) => n.info.trigger)?.name ?? null, focus: (view.dockOpen && !view.replay && claudeFocus(view, w.id)) || focusOf(view, graph, run),
+          center: focus?.node ?? null, focus,
           onSelect: (name, cx) => { view.sel.node = name; cx.notify(); }, onChange: notify }))
-        .child(div().absolute().bottom(14).right(14).child(graphControls(c, { id: "gc", state: view.graph, graph, onChange: notify })))
+        .child(div().absolute().bottom(14).right(14).child(graphControls(c, { id: "gc", state: view.graph, graph, onChange: notify, center: focus?.node ?? null })))
         .child(h_flex().absolute().bottom(14).left(14).gap(12).px(10).py(6).rounded(8).bg(alpha(c.surface, 0.9)).border(1).border_color(c.border).text_size(11).text_color(c.muted)
           .when(Boolean(run), (e) => e
             .child(h_flex().gap(5).items_center().child(dot(c.ok, 7)).child(div().child("ran")))

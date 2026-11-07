@@ -31,7 +31,9 @@ export const spriteKind = () => (SPRITES.some((s) => s.id === shared(SPRITE_KEY)
 export const motionPrefs = { reduced: false };
 
 const ORANGE = "#f97316", GREEN = "#4ade80";
-const GLIDE = (ms = TICK) => ({ duration: ms, easing: "linear" });
+// A move's steps glide; while the view itself is zooming, sprites keep up with it instead.
+let zooming = false;
+const GLIDE = (ms = TICK) => ({ duration: zooming ? 1 : ms, easing: "linear" });
 
 // ── Pixel art ─────────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -274,6 +276,7 @@ export function focusSprite(c, state, graph, z, focus, kind = spriteKind()) {
   const draw = DRAW[kind];
   if (!draw || !focus?.node) { m.needsTick = false; return null; }
   const reduced = motionPrefs.reduced;
+  zooming = Boolean(state.anim);
   stepMotion(m, focus.node, kind, reduced, Date.now());
   // Pixels stay whole: three screen pixels per sprite pixel, two when zoomed far out, the same size at any zoom.
   const px = z >= 0.75 ? 3 : 2;
