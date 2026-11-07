@@ -200,7 +200,7 @@ function flames(px, len) {
 
 const eye = (px, blink) => art(`probe-eye-${blink}`, 2, 2, px, {}, [], false, 2, blink ? [[GREEN, 0, 1, 2, 1]] : [[GREEN, 0, 0, 2, 2]]);
 
-function drawProbe(c, { m, graph, z, px, reduced, mood }) {
+function drawProbe(c, { m, graph, z, px, reduced, mood, state }) {
   const n = graph.nodes.find((x) => x.name === m.node);
   if (!n) return null;
   const nx = n.x * z, ny = n.y * z, nw = n.w * z, nh = n.h * z;
@@ -220,7 +220,9 @@ function drawProbe(c, { m, graph, z, px, reduced, mood }) {
     cy = ny - HOVER;
     // The scan: a faint fan from the drone over the card, and a bright line sweeping across it with a soft glow.
     const by = snap(cy) + 6 * px, left = nx + 10, right = nx + nw - 10, period = 4084;
-    const fan = PathBuilder.fill().add_polygon([[cx - 6, by], [cx + 6, by], [right + 12, ny], [left - 12, ny]], true).build();
+    const fanKey = `${n.name}|${z}|${px}`;
+    if (state.fanKey !== fanKey) { state.fan = PathBuilder.fill().add_polygon([[cx - 6, by], [cx + 6, by], [right + 12, ny], [left - 12, ny]], true).build(); state.fanKey = fanKey; }
+    const fan = state.fan;
     const fade = m.since < 250 && !reduced ? 0 : 1;
     const sweep = (el, w) => (reduced ? el.left(cx - w / 2) : el.left(left - w / 2).loop("left", { from: left - w / 2, to: right - w / 2, period, easing: "ease-in-out" }));
     under.push(div().id("fs-scan").absolute().top(0).left(0).opacity(fade).transition("opacity", { duration: 250, easing: "ease-out" })
@@ -275,5 +277,5 @@ export function focusSprite(c, state, graph, z, focus, kind = spriteKind()) {
   stepMotion(m, focus.node, kind, reduced, Date.now());
   // Pixels stay whole: three screen pixels per sprite pixel, two when zoomed far out, the same size at any zoom.
   const px = z >= 0.75 ? 3 : 2;
-  return draw(c, { m, graph, z, px, reduced, mood: focus.mood });
+  return draw(c, { m, graph, z, px, reduced, mood: focus.mood, state });
 }

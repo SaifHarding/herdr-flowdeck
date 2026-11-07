@@ -115,6 +115,7 @@ export class AskSession {
         cx.spawn(async (cx) => {
           const r = await readAsk(job);
           if (this.job !== job) return;
+          const news = r.text !== a.text || r.done;
           a.text = r.text;
           const late = Date.now() - job.started > MAX_MS;
           if (r.done || late) {
@@ -127,7 +128,7 @@ export class AskSession {
             this.job = null;
             if (late && !r.done) await cancelAsk(job); else await cleanupAsk(job);
           }
-          cx.notify();
+          if (news) cx.notify();
         });
       });
     } catch (e) {

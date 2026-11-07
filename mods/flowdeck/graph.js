@@ -96,7 +96,8 @@ function paths(state, graph, z, run, replay, c) {
   const key = `${graph.key}|${z}|${hl}|${c.dark}`;
   const hit = state.cache.get(key);
   if (hit) return hit;
-  if (state.cache.size > 40) state.cache.clear();
+  // Paths for a handful of zooms and run overlays; older ones go.
+  if (state.cache.size > 16) state.cache.delete(state.cache.keys().next().value);
   const order = run ? (replay ? run.order.slice(0, replay.step + 1) : run.order) : [];
   const went = run ? travelled(graph, order) : new Set();
   const failedInto = run?.node && !replay ? run.node : null;
@@ -129,17 +130,20 @@ function grid(state, c) {
   // At least 18 px apart, so a zoomed-out canvas doesn't draw tens of thousands of dots.
   let step = 22 * state.zoom;
   while (step < 18) step *= 2;
+  // Built once per size and spacing, one step larger than the view each way, and slid by the pan offset modulo the
+  // spacing: panning moves it, never rebuilds it.
   const ox = ((state.x % step) + step) % step, oy = ((state.y % step) + step) % step;
-  const key = `grid|${Math.round(s.width)}x${Math.round(s.height)}|${step.toFixed(2)}|${ox.toFixed(0)},${oy.toFixed(0)}`;
-  let path = state.cache.get(key);
+  const W = s.width + step * 2, H = s.height + step * 2;
+  const key = `grid|${Math.round(W)}x${Math.round(H)}|${step.toFixed(2)}`;
+  let path = state.grid?.key === key ? state.grid.path : null;
   if (!path) {
     const b = PathBuilder.fill(), r = 0.8;
-    for (let x = ox; x < s.width; x += step) for (let y = oy; y < s.height; y += step) b.add_polygon([[x - r, y - r], [x + r, y - r], [x + r, y + r], [x - r, y + r]], true);
+    for (let x = 0; x < W; x += step) for (let y = 0; y < H; y += step) b.add_polygon([[x - r, y - r], [x + r, y - r], [x + r, y + r], [x - r, y + r]], true);
     path = b.build();
-    for (const k of state.cache.keys()) if (k.startsWith("grid|")) state.cache.delete(k);
-    state.cache.set(key, path);
+    state.grid = { key, path };
   }
-  return window.paint_path(path, alpha(c.foreground, c.dark ? 0.09 : 0.12)).absolute().top(0).left(0).w(s.width).h(s.height);
+  return div().absolute().top(0).left(0).size_full().overflow_hidden()
+    .child(window.paint_path(path, alpha(c.foreground, c.dark ? 0.09 : 0.12)).absolute().left(ox - step).top(oy - step).w(W).h(H));
 }
 
 function nodeCard(c, n, z, st, { selected, onSelect, entered, index, runInfo, shake = false }) {

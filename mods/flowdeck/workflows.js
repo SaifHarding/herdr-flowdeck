@@ -1,8 +1,8 @@
 // Workflows: every workflow on the left with its last runs as a strip; the chosen one as a graph on the right, with
 // any of its runs laid over it, a replay, and an inspector for the node you click.
 
-import { div } from "gpui-kit";
-import { h_flex, v_flex, Input } from "gpui-base";
+import { div, uniform_list } from "gpui-kit";
+import { h_flex, v_flex, Input, Scrollbar } from "gpui-base";
 import { alpha, icon, button, chip, dot, runStrip, statusColor, empty, spinner, rise, mono } from "./ui.js";
 import { graphView, graphControls } from "./graph.js";
 import { askDock, claudeFocus } from "./ask.js";
@@ -11,11 +11,15 @@ import { links } from "./n8n.js";
 
 const ORDER = { failing: 0, flaky: 1, healthy: 2, quiet: 3 };
 
+// Filtered and sorted once per change of data, search or filter, not on every redraw (a redraw happens on every step
+// of a sprite's move, every slice of a streaming answer, every mouse move while panning).
 export function sortedWorkflows(view) {
   const m = view.derived();
   const q = view.inputs.search.value().trim().toLowerCase();
   const f = view.sel.filter;
-  return view.data.workflows
+  const key = `${m.version}|${m.minute}|${q}|${f}`;
+  if (view.sortedMemo?.key === key) return view.sortedMemo.list;
+  const list = view.data.workflows
     .filter((w) => !q || w.name.toLowerCase().includes(q) || (w.tags ?? []).some((t) => String(t.name ?? t).toLowerCase().includes(q)) || (w.nodes ?? []).some((n) => n.name.toLowerCase().includes(q) || String(n.type).toLowerCase().includes(q)))
     .filter((w) => f === "all" || (f === "active" && w.active) || (f === "failing" && ["failing", "flaky"].includes(m.stats.get(w.id)?.health)))
     .sort((a, b) => {
@@ -25,9 +29,15 @@ export function sortedWorkflows(view) {
       if (ha !== hb) return ha - hb;
       return startOf(sb?.last ?? {}) - startOf(sa?.last ?? {});
     });
+  view.sortedMemo = { key, list };
+  return list;
 }
 
-const runsFor = (s) => (s?.runs ?? []).map((r) => ({ id: r.id, status: r.status ?? (r.finished ? "success" : "error"), ms: durationOf(r), tip: `${r.status} · ${when(startOf(r))} · ${duration(durationOf(r))}` }));
+// The newest `limit` runs as strip bars. Only the big strip, whose bars can be clicked, needs their tooltips.
+const runsFor = (s, limit = 48, tips = false) => (s?.runs ?? []).slice(0, limit).map((r) => ({
+  id: r.id, status: r.status ?? (r.finished ? "success" : "error"), ms: durationOf(r),
+  ...(tips ? { tip: `${r.status} · ${when(startOf(r))} · ${duration(durationOf(r))}` } : {}),
+}));
 
 const LIST_W = 318, RAIL_W = 58;
 
@@ -38,18 +48,17 @@ function rail(view, c, m, ws) {
     .w(RAIL_W).transition("width", { duration: 260, easing: "ease-out" })
     .child(v_flex().py(10).items_center().border_b(1).border_color(c.border).w_full()
       .child(button(c, { id: "list-open", iconName: "sidebar", kind: "subtle", tooltip: "Show workflows", onClick: (_e, cx) => view.toggleList(cx) })))
-    .child(v_flex().id("wf-rail-rows").flex_1().min_h(0).overflow_y_scrollbar().py(8).gap(4).items_center().w_full()
-      .children(ws.slice(0, 200).map((w) => {
+    .child(div().id("wf-rail-wrap").relative().flex_1().min_h(0).w_full()
+      .child(uniform_list("wf-rail-rows", ws.length, (i) => ws[i].id, (range) => ws.slice(range.start, range.end).map((w) => {
         const st = m.stats.get(w.id), on = view.sel.workflowId === w.id;
         const col = !w.active ? c.dim : statusColor(c, st?.health);
         const initials = w.name.replace(/[^A-Za-z0-9 ]/g, " ").trim().split(/\s+/).slice(0, 2).map((x) => x[0]?.toUpperCase() ?? "").join("");
-        return h_flex().id(`rail-${w.id}`).relative().size(38).rounded(10).items_center().justify_center().cursor_pointer()
+        return h_flex().w(RAIL_W).h(42).justify_center().items_center().child(h_flex().relative().size(38).rounded(10).items_center().justify_center().cursor_pointer()
           .bg(on ? alpha(c.brand, 0.16) : "#00000000").border(1).border_color(on ? alpha(c.brand, 0.5) : "#00000000")
           .hover((s2) => s2.bg(on ? alpha(c.brand, 0.2) : c.hover)).tooltip(`${w.name}${st?.fails24 ? ` · ${st.fails24} failed today` : ""}`)
-          .on_click((_e, cx) => view.showWorkflow(w.id, cx))
           .child(div().text_size(11.5).font_semibold().text_color(w.active ? c.foreground : c.dim).child(initials || "·"))
-          .child(div().absolute().top(3).right(3).child(dot(col, 7, st?.health === "failing" && w.active)));
-      })));
+          .child(div().absolute().top(3).right(3).child(dot(col, 7, st?.health === "failing" && w.active))));
+      })).size_full().on_item_click((key, cx) => view.showWorkflow(key, cx))));
 }
 
 function list(view, c, m) {
@@ -68,29 +77,31 @@ function list(view, c, m) {
         .child(chip(c, { id: "f-all", label: "All", count: view.data.workflows.length, active: f === "all", onClick: setF("all") }))
         .child(chip(c, { id: "f-active", label: "Active", active: f === "active", onClick: setF("active") }))
         .child(chip(c, { id: "f-failing", label: "Failing", count: failingCount || null, color: c.err, active: f === "failing", onClick: setF("failing") }))))
-    .child(v_flex().id("wf-rows").flex_1().min_h(0).overflow_y_scrollbar().p(6).gap(2)
-      .when(!ws.length, (e) => e.child(div().p(20).text_size(12).text_color(c.dim).text_center().child("No workflows match.")))
-      .children(ws.slice(0, 400).map((w) => {
-        const s = m.stats.get(w.id), on = view.sel.workflowId === w.id;
-        const col = !w.active ? c.dim : statusColor(c, s?.health);
-        return v_flex().id(`wf-${w.id}`).px(10).py(9).gap(6).rounded(9).cursor_pointer()
-          .bg(on ? alpha(c.brand, 0.12) : "#00000000").border(1).border_color(on ? alpha(c.brand, 0.45) : "#00000000")
-          .hover((st) => st.bg(on ? alpha(c.brand, 0.16) : c.hover))
-          .on_click((_e, cx) => view.showWorkflow(w.id, cx))
-          .child(h_flex().gap(8).items_center()
-            .child(dot(col, 8, s?.health === "failing" && w.active))
-            .child(div().flex_1().min_w(0).truncate().text_size(12.8).font_medium().text_color(w.active ? c.foreground : c.muted).child(w.name))
-            .when(Boolean(s?.fails24), (e) => e.child(h_flex().h(17).px(6).rounded(9).items_center().bg(alpha(c.err, 0.15)).text_color(c.err).text_size(10.5).font_semibold().child(`${s.fails24}✕`))))
-          .child(h_flex().gap(8).items_center().pl(16)
-            .child(div().flex_1().min_w(0).truncate().text_size(11.3).text_color(c.dim)
-              .child(`${triggerOf(w)} · ${w.nodes?.length ?? "?"} nodes${w.active ? "" : " · off"}${s?.last ? ` · ${ago(startOf(s.last), m.now)}` : ""}`))
-            .when(Boolean(s?.runs.length), (e) => e.child(runStrip(c, { id: `strip-${w.id}`, runs: runsFor(s), count: 14, height: 13, width: 3, gap: 1.5 }))));
-      }))
-      .when(ws.length > 400, (e) => e.child(div().p(10).text_size(11.5).text_color(c.dim).text_center().child(`Showing 400 of ${ws.length}. Search to narrow it down.`))));
+    // Only the rows on screen are built, however many workflows there are. Clicks come through on_item_click, as
+    // a virtual list's rows can't hold handlers.
+    .child(!ws.length
+      ? div().p(20).text_size(12).text_color(c.dim).text_center().child("No workflows match.")
+      : div().id("wf-rows-wrap").relative().flex_1().min_h(0).w_full()
+        .child(uniform_list("wf-rows", ws.length, (i) => ws[i].id, (range) => ws.slice(range.start, range.end).map((w) => {
+          const s = m.stats.get(w.id), on = view.sel.workflowId === w.id;
+          const col = !w.active ? c.dim : statusColor(c, s?.health);
+          return div().px(6).pt(2).child(v_flex().h(60).px(10).py(9).gap(6).rounded(9).cursor_pointer()
+            .bg(on ? alpha(c.brand, 0.12) : "#00000000").border(1).border_color(on ? alpha(c.brand, 0.45) : "#00000000")
+            .hover((st) => st.bg(on ? alpha(c.brand, 0.16) : c.hover))
+            .child(h_flex().gap(8).items_center()
+              .child(dot(col, 8, s?.health === "failing" && w.active))
+              .child(div().flex_1().min_w(0).truncate().text_size(12.8).font_medium().text_color(w.active ? c.foreground : c.muted).child(w.name))
+              .when(Boolean(s?.fails24), (e) => e.child(h_flex().h(17).px(6).rounded(9).items_center().bg(alpha(c.err, 0.15)).text_color(c.err).text_size(10.5).font_semibold().child(`${s.fails24}✕`))))
+            .child(h_flex().gap(8).items_center().pl(16)
+              .child(div().flex_1().min_w(0).truncate().text_size(11.3).text_color(c.dim)
+                .child(`${triggerOf(w)} · ${w.nodes?.length ?? "?"} nodes${w.active ? "" : " · off"}${s?.last ? ` · ${ago(startOf(s.last), m.now)}` : ""}`))
+              .when(Boolean(s?.runs.length), (e) => e.child(runStrip(c, { id: `strip-${w.id}`, runs: runsFor(s, 14), count: 14, height: 13, width: 3, gap: 1.5 })))));
+        })).size_full().on_item_click((key, cx) => view.showWorkflow(key, cx)))
+        .child(Scrollbar.vertical("wf-rows").absolute().top(0).left(0).size_full()));
 }
 
 function runBar(view, c, w, s, run) {
-  const runs = runsFor(s);
+  const runs = runsFor(s, 48, true);
   const sel = view.sel.runId;
   const e = s?.runs.find((r) => String(r.id) === String(sel));
   const st = e?.status;
