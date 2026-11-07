@@ -312,6 +312,127 @@ export function extractRun(detail) {
   };
 }
 
+// ── Reading big executions lean ───────────────────────────────────────────────────────────────────────────────
+
+// An execution fetched with includeData carries every item that flowed through every node: megabytes for a busy AI
+// workflow, and many times that once parsed into objects. Every Flowdeck copy shares one JavaScript heap with all of
+// Herdr's mods, so parsing it whole can run them all out of memory. This walks the JSON text and builds only what
+// extractRun reads: the run's header, its error, and each node's timing and status. Everything else (items, binary
+// data, the workflow copy, the execution stack) is stepped over without being built.
+const LEAN_TOP = new Set(["id", "finished", "mode", "startedAt", "stoppedAt", "workflowId", "status", "data"]);
+const LEAN_RESULT = new Set(["error", "lastNodeExecuted", "runData"]);
+const LEAN_ERROR = new Set(["message", "description", "name", "httpCode", "node"]);
+const LEAN_NODE = new Set(["name", "type", "typeVersion"]);
+const LEAN_RUN = new Set(["startTime", "executionTime", "executionStatus", "error"]);
+const LEAN_RUN_ERROR = new Set(["message", "description", "name", "httpCode"]);
+
+function leanKeep(path) {
+  const n = path.length, k = path[n - 1];
+  if (n === 1) return LEAN_TOP.has(k);
+  if (path[0] !== "data") return false;
+  if (n === 2) return k === "resultData";
+  if (path[1] !== "resultData") return false;
+  if (n === 3) return LEAN_RESULT.has(k);
+  if (path[2] === "error") return n === 4 ? LEAN_ERROR.has(k) : path[3] === "node" && n === 5 && LEAN_NODE.has(k);
+  if (path[2] !== "runData") return false;
+  if (n <= 5) return true; // node name, run index
+  if (n === 6) return LEAN_RUN.has(k);
+  return path[5] === "error" && n === 7 && LEAN_RUN_ERROR.has(k);
+}
+
+export const leanExecution = (text) => leanJson(text, leanKeep);
+
+// A page of workflows, without what Flowdeck never shows: pinned test data, static data, sharing and version
+// records, which can run to megabytes on a busy instance.
+const WF_KEEP = new Set(["id", "name", "active", "isArchived", "createdAt", "updatedAt", "tags", "nodes", "connections", "settings"]);
+function workflowKeep(path) {
+  const n = path.length;
+  if (n === 1) return path[0] === "data" || path[0] === "nextCursor";
+  if (path[0] !== "data") return false;
+  if (n === 2) return true;
+  if (n === 3) return WF_KEEP.has(path[2]);
+  return true;
+}
+export const leanWorkflows = (text) => leanJson(text, workflowKeep);
+
+// The walker behind both: builds only the paths `keep` accepts, steps over the rest.
+export function leanJson(text, keep) {
+  const leanKeep = keep;
+  const s = String(text);
+  let i = 0;
+  const fail = () => { throw new Error("not JSON"); };
+  const ws = () => { for (let c = s.charCodeAt(i); c === 32 || c === 10 || c === 13 || c === 9; c = s.charCodeAt(++i)); };
+  // A string, by its raw text: native indexOf finds the closing quote, skipping escaped ones.
+  const raw = () => {
+    if (s[i] !== '"') fail();
+    for (let j = i + 1; ;) {
+      const q = s.indexOf('"', j);
+      if (q < 0) fail();
+      let b = q - 1, slashes = 0;
+      while (s.charCodeAt(b) === 92) { slashes++; b--; }
+      if (slashes % 2 === 0) { const out = s.slice(i, q + 1); i = q + 1; return out; }
+      j = q + 1;
+    }
+  };
+  const STRUCT = /["{}[\]]/g, DELIM = /[,\]}]/g;
+  // Steps over a value without building it.
+  const skip = () => {
+    ws();
+    const c = s[i];
+    if (c === '"') { raw(); return; }
+    if (c === "{" || c === "[") {
+      let depth = 0;
+      STRUCT.lastIndex = i;
+      for (;;) {
+        const m = STRUCT.exec(s);
+        if (!m) fail();
+        if (m[0] === '"') { i = m.index; raw(); STRUCT.lastIndex = i; continue; }
+        if (m[0] === "{" || m[0] === "[") depth++;
+        else if (--depth === 0) { i = m.index + 1; return; }
+      }
+    }
+    DELIM.lastIndex = i;
+    const m = DELIM.exec(s);
+    i = m ? m.index : s.length;
+  };
+  const value = (path) => {
+    ws();
+    const c = s[i];
+    if (c === "{" || c === "[") {
+      const obj = c === "{";
+      const out = obj ? {} : [];
+      i++;
+      ws();
+      if (s[i] === (obj ? "}" : "]")) { i++; return out; }
+      for (let n = 0; ; n++) {
+        ws();
+        let key = n;
+        if (obj) { key = JSON.parse(raw()); ws(); if (s[i] !== ":") fail(); i++; }
+        const p = path.concat([key]);
+        if (leanKeep(p.map((x) => (typeof x === "number" ? x : String(x))))) {
+          const v = value(p);
+          if (obj) out[key] = v; else out.push(v);
+        } else {
+          skip();
+          if (!obj) out.push(null);
+        }
+        ws();
+        if (s[i] === ",") { i++; continue; }
+        if (s[i] === (obj ? "}" : "]")) { i++; return out; }
+        fail();
+      }
+    }
+    if (c === '"') return JSON.parse(raw());
+    DELIM.lastIndex = i;
+    const m = DELIM.exec(s);
+    const end = m ? m.index : s.length;
+    const tok = s.slice(i, end).trim();
+    i = end;
+    return JSON.parse(tok);
+  };
+  return value([]);
+}
+
 // Strips run-specific numbers and ids from an error so the same fault groups together across runs.
 export function signature(message = "") {
   return String(message).toLowerCase()

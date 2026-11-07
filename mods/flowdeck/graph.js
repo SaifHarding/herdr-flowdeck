@@ -126,7 +126,9 @@ function paths(state, graph, z, run, replay, c) {
 function grid(state, c) {
   const s = state.size;
   if (!s) return null;
-  const step = 22 * state.zoom < 10 ? 44 * state.zoom : 22 * state.zoom;
+  // At least 18 px apart, so a zoomed-out canvas doesn't draw tens of thousands of dots.
+  let step = 22 * state.zoom;
+  while (step < 18) step *= 2;
   const ox = ((state.x % step) + step) % step, oy = ((state.y % step) + step) % step;
   const key = `grid|${Math.round(s.width)}x${Math.round(s.height)}|${step.toFixed(2)}|${ox.toFixed(0)},${oy.toFixed(0)}`;
   let path = state.cache.get(key);

@@ -5,12 +5,13 @@
 // that would replay it, and every answer's final URL is checked against the instance too.
 
 import { demoInstance, demoExecution } from "./demo.js";
-import { DAY, startOf } from "./model.js";
+import { DAY, startOf, leanExecution, leanWorkflows } from "./model.js";
 
 const MAX_WORKFLOWS = 1000;
 const MAX_EXECUTIONS = 3000;
 const MAX_BODY = 6 * 1024 * 1024;
 const MAX_PAGES = 20;
+const MAX_EXECUTION = 8 * 1024 * 1024;
 
 export class N8nError extends Error {
   constructor(message, kind = "network", status = null) {
@@ -33,7 +34,7 @@ function sameOrigin(base, url) {
   try { return new URL(url).origin === new URL(base).origin; } catch { return false; }
 }
 
-async function getJson(base, path, headers) {
+async function getJson(base, path, headers, { parse = JSON.parse, max = MAX_BODY } = {}) {
   const url = `${base}${path}`;
   let res;
   try {
@@ -46,8 +47,8 @@ async function getJson(base, path, headers) {
   if (res.url && !sameOrigin(base, res.url)) throw new N8nError("The answer came from a different address than your instance. Refusing it.", "redirect");
   const text = await res.text();
   if (!res.ok) throw explain(res.status, text.slice(0, 4096));
-  if (text.length > MAX_BODY) throw new N8nError("n8n sent more than Flowdeck will read in one answer.", "server");
-  try { return JSON.parse(text); } catch { throw new N8nError("n8n's answer wasn't JSON. Is this the n8n address, not a login page?", "server"); }
+  if (text.length > max) throw new N8nError("n8n sent more than Flowdeck will read in one answer.", "toolarge");
+  try { return parse(text); } catch { throw new N8nError("n8n's answer wasn't JSON. Is this the n8n address, not a login page?", "server"); }
 }
 
 // ── REST ──────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -66,11 +67,11 @@ export class RestSource {
 
   // Pages until n8n says there are no more, the cap is reached, or the server misbehaves (an empty page, a cursor it
   // already gave): a buggy or hostile server can't keep Flowdeck fetching forever.
-  async paged(path, max, stop) {
+  async paged(path, max, stop, parse = JSON.parse) {
     const out = [], seen = new Set();
     let cursor = null;
     for (let pages = 0; pages < MAX_PAGES; pages++) {
-      const page = await getJson(this.base, `${path}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, this.headers);
+      const page = await getJson(this.base, `${path}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`, this.headers, { parse });
       const data = Array.isArray(page?.data) ? page.data.slice(0, 250) : [];
       for (const x of data) if (out.length < max) out.push(x);
       cursor = typeof page?.nextCursor === "string" ? page.nextCursor : null;
@@ -81,7 +82,7 @@ export class RestSource {
   }
 
   async workflows() {
-    const out = await this.paged("/api/v1/workflows?limit=250", MAX_WORKFLOWS);
+    const out = await this.paged("/api/v1/workflows?limit=100", MAX_WORKFLOWS, null, leanWorkflows);
     return out.filter((w) => w && typeof w === "object" && !w.isArchived);
   }
 
@@ -98,7 +99,8 @@ export class RestSource {
 
   async execution(id) {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(String(id))) throw new N8nError("Bad execution id", "server");
-    return getJson(this.base, `/api/v1/executions/${encodeURIComponent(id)}?includeData=true`, this.headers);
+    // Read lean: the items in a big run never become objects (see leanExecution).
+    return getJson(this.base, `/api/v1/executions/${encodeURIComponent(id)}?includeData=true`, this.headers, { parse: leanExecution, max: MAX_EXECUTION });
   }
 }
 

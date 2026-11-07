@@ -34,8 +34,8 @@ const BADGE = "flowdeck.badge";
 const MOTION_KEY = "flowdeck.motion";
 const POLL_MS = 30e3;
 const FULL_MS = 5 * 60e3;
-const DETAIL_BATCH = 60;
-const DETAIL_MAX = 300;
+const DETAIL_BATCH = 30;
+const DETAIL_MAX = 150;
 const TABS = [
   { id: "overview", label: "Overview", icon: "grid" },
   { id: "workflows", label: "Workflows", icon: "flow" },
@@ -453,7 +453,8 @@ export default class Flowdeck extends View {
         }
       }
     };
-    await Promise.all([worker(), worker(), worker()]);
+    // Two at a time: each response is held as text while it's read, and every mod shares one heap.
+    await Promise.all([worker(), worker()]);
     d.version++;
     this.updateBadge();
     cx.notify();

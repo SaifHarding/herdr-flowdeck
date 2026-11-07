@@ -300,3 +300,35 @@ test("pasted tokens: Bearer and quotes are trimmed, and an address in the token 
   assert.ok(u.error && u.url, "an address, not a token");
   assert.match(u.error, /Settings → n8n API/);
 });
+
+test("big executions are read lean: same answer as a full parse, without building the items", async () => {
+  const { leanExecution } = await import("../mods/flowdeck/model.js");
+  const inst = demoInstance(Date.now());
+  for (const e of inst.executions.filter((x) => x.status === "error").slice(0, 40)) {
+    const full = demoExecution(inst, e.id);
+    full.workflowData = { nodes: [{ name: "x", parameters: { big: "y".repeat(1000) } }] };
+    full.data.executionData = { nodeExecutionStack: [{ data: { main: [[{ json: { a: '"quoted \\" }', b: [1, { c: "]" }] } }]] } }] };
+    assert.deepEqual(extractRun(leanExecution(JSON.stringify(full))), extractRun(full));
+  }
+  // A run with megabytes of items: kept small, read fast.
+  const node = (n) => [{ startTime: 1, executionTime: 5, executionStatus: "success", data: { main: [Array.from({ length: 4000 }, (_, k) => ({ json: { id: k, text: "lorem ipsum ".repeat(20), nested: { a: [1, 2, { b: "}{][" }] } } }))] } }];
+  const big = JSON.stringify({ id: "9", status: "success", workflowId: "w", startedAt: "2026-11-07T10:00:00Z", data: { resultData: { runData: { A: node("A"), B: node("B"), C: node("C") }, lastNodeExecuted: "C" } } });
+  assert.ok(big.length > 3_000_000, `payload ${big.length}`);
+  const t0 = Date.now();
+  const lean = leanExecution(big);
+  const ms = Date.now() - t0;
+  assert.equal(JSON.stringify(lean).length < 2000, true, "items dropped");
+  assert.deepEqual(extractRun(lean).order.map((o) => o.name), ["A", "B", "C"]);
+  assert.ok(ms < 2000, `took ${ms} ms`);
+});
+
+test("workflow pages are read without pinned or static data", async () => {
+  const { leanWorkflows } = await import("../mods/flowdeck/model.js");
+  const w = { ...DEMO_WORKFLOWS[0], pinData: { "Stripe Trigger": [{ json: { huge: "x".repeat(100000) } }] }, staticData: { s: "y".repeat(50000) }, shared: [{ role: "owner" }] };
+  const lean = leanWorkflows(JSON.stringify({ data: [w], nextCursor: "abc" }));
+  assert.equal(lean.nextCursor, "abc");
+  assert.equal(lean.data[0].pinData, undefined);
+  assert.equal(lean.data[0].staticData, undefined);
+  assert.deepEqual(lean.data[0].nodes, JSON.parse(JSON.stringify(w.nodes)));
+  assert.deepEqual(lean.data[0].connections, w.connections);
+});

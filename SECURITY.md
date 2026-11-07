@@ -28,7 +28,8 @@ Flowdeck handles a credential that can read everything in an n8n instance. This 
   - Paging stops after 20 pages, on an empty page, or on a cursor the server already gave.
   - Lists are cut to 1,000 workflows and 3,000 executions (7 days), with 250 items a page.
   - Failure details stop at 300, fetched 3 at a time. Graphs lay out at most 300 nodes.
-  - Responses over 6 MiB are refused, and error bodies are cut to 4 KB before parsing.
+  - Responses over 6 MiB (8 MiB for one execution) are refused, and error bodies are cut to 4 KB before parsing.
+  - Executions and workflow pages are read lean: a walker over the JSON text builds only the fields Flowdeck shows. Run items, pinned data and static data are stepped over and never become objects. Every mod shares one JavaScript heap, so a full parse of a busy AI workflow's run could exhaust it for all of Herdr.
   - After an HTTP 429, everything waits: the refresh for 2 minutes, and failure details for a minute.
 - **Redaction can't be hung.** Text is cut to its display length before any pattern runs, and every pattern has bounded repetition. A multi-megabyte error crafted to make a regex backtrack is handled in milliseconds (a test covers this).
 
