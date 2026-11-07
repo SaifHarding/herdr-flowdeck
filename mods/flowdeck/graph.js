@@ -316,6 +316,14 @@ function alertMark(c, n, z, labelText) {
       .child(icon("alert", 11, "#ffffff")).child(div().text_size(10.5).font_bold().text_color("#ffffff").child(labelText ?? "Likely cause")));
 }
 
+function startPan(state, e, button, cx) {
+  state.dragging = { x: e.position.x, y: e.position.y, button };
+  state.moved = false;
+  state.glide = false;
+  state.anim = null;
+  cx.notify();
+}
+
 // The graph view. `run` (from extractRun) lays a run over the picture; `replay` ({ step }) shows it part-way.
 export function graphView(c, { id, graph, state, run, replay, selected, onSelect, onChange, active, focus, follow = false, center = null }) {
   const fitKey = `${graph?.key}|${center ?? ""}`;
@@ -375,7 +383,10 @@ export function graphView(c, { id, graph, state, run, replay, selected, onSelect
       else if (!state.touched || state.fitted?.split("|")[0] !== String(graph?.key)) { state.fitOrCenter(graph, center, false); state.fitted = fitKey; }
       onChange(cx);
     })
-    .on_mouse_down("left", (e, cx) => { state.dragging = { x: e.position.x, y: e.position.y }; state.moved = false; state.glide = false; state.anim = null; cx.notify(); })
+    // Pan as in n8n: hold the wheel (middle button) and drag, from anywhere on the canvas, cards included; or drag
+    // empty canvas with the left button. A left press that doesn't move is a click on the background.
+    .on_mouse_down("left", (e, cx) => startPan(state, e, "left", cx))
+    .on_mouse_down("middle", (e, cx) => { startPan(state, e, "middle", cx); cx.stop_propagation(); })
     .on_mouse_move((e, cx) => {
       const d = state.dragging;
       if (!d) return;
@@ -385,15 +396,20 @@ export function graphView(c, { id, graph, state, run, replay, selected, onSelect
       state.touched = true;
       state.x += dx;
       state.y += dy;
-      state.dragging = { x: e.position.x, y: e.position.y };
+      state.dragging = { ...d, x: e.position.x, y: e.position.y };
       onChange(cx);
     })
     .on_mouse_up("left", (_e, cx) => {
-      const clicked = state.dragging && !state.moved;
+      if (state.dragging?.button !== "left") return;
+      const clicked = !state.moved;
       state.dragging = null;
       if (clicked) onSelect(null, cx);
       else onChange(cx);
     })
+    .on_mouse_up("middle", (_e, cx) => { state.dragging = null; onChange(cx); })
+    // Released outside the canvas: the up never arrives here, so leaving ends the drag rather than leaving it stuck.
+    .on_hover((over, cx) => { if (!over && state.dragging) { state.dragging = null; onChange(cx); } })
+    .when(Boolean(state.dragging && state.moved), (e) => e.cursor_grabbing())
     .on_scroll_wheel((e, cx) => {
       state.glide = false;
       state.touched = true;
